@@ -354,7 +354,12 @@ export function FamilyProvider({ children }) {
   useEffect(() => {
     if (!token) return;
 
-    const socketUrl = (import.meta.env.VITE_SOCKET_URL || window.location.origin).replace(/\/+$/, '');
+    let defaultSocket = window.location.origin;
+    if (import.meta.env.PROD && typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || !window.location.hostname.includes('localhost'))) {
+      defaultSocket = 'https://family-tracker-fidw.onrender.com';
+    }
+    const rawSocket = import.meta.env.VITE_SOCKET_URL || defaultSocket;
+    const socketUrl = rawSocket.replace(/\/+$/, '').replace(/\/api$/, '');
     const s = io(socketUrl, {
       auth: { token },
       transports: ['websocket', 'polling'],

@@ -1,4 +1,16 @@
-const BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '');
+function getBaseUrl() {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && envUrl.trim()) {
+    const cleaned = envUrl.trim().replace(/\/+$/, '');
+    return cleaned.endsWith('/api') ? cleaned : `${cleaned}/api`;
+  }
+  if (import.meta.env.PROD && typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || !window.location.hostname.includes('localhost'))) {
+    return 'https://family-tracker-fidw.onrender.com/api';
+  }
+  return '/api';
+}
+
+const BASE_URL = getBaseUrl();
 
 function getToken() {
   return localStorage.getItem('ft_token');
