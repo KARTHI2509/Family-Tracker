@@ -1,8 +1,11 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Device } from '@capacitor/device';
 import { Network } from '@capacitor/network';
 import { Preferences } from '@capacitor/preferences';
 import { App } from '@capacitor/app';
+
+// Native Android Plugin bridge
+const FamilyLocation = registerPlugin('FamilyLocation');
 
 const STORAGE_KEYS = {
   TRACKING_ENABLED: 'ft_native_tracking_enabled',
@@ -52,12 +55,6 @@ class NativeLocationService {
     this.subscribers = new Set();
     this.isSyncingQueue = false;
     this.wakeLock = null;
-    this.desiredPermission = 'always';
-
-    // Initialize desired permission from storage
-    this.getDesiredPermission().then((val) => {
-      this.desiredPermission = val;
-    });
 
     // Listen for network connectivity to flush offline location queue
     if (this.isNative) {
@@ -78,6 +75,21 @@ class NativeLocationService {
     } else {
       window.addEventListener('online', () => this.flushOfflineQueue());
     }
+  }
+
+  /**
+   * Detect whether FamilyTracker is running as Web, PWA or Native App
+   */
+  getEnvironmentType() {
+    if (this.isNative) {
+      return this.platform; // 'android' | 'ios'
+    }
+    const isStandalone = typeof window !== 'undefined' && (
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true ||
+      (document.referrer && document.referrer.includes('android-app://'))
+    );
+    return isStandalone ? 'pwa' : 'web';
   }
 
   /**
@@ -106,7 +118,7 @@ class NativeLocationService {
       try {
         if (!this.wakeLock) {
           this.wakeLock = await navigator.wakeLock.request('screen');
-          console.log('[NativeLocation] Screen Wake Lock acquired (continuous tracking active).');
+          console.log('[NativeLocation] Screen Wake Lock acquired.');
           this.wakeLock.addEventListener('release', () => {
             console.log('[NativeLocation] Screen Wake Lock released.');
             this.wakeLock = null;
@@ -128,108 +140,163 @@ class NativeLocationService {
   }
 
   /**
-   * Get desired user permission level ('always' | 'while_using' | 'denied')
-   */
-  async getDesiredPermission() {
-    try {
-      const { value } = await Preferences.get({ key: STORAGE_KEYS.DESIRED_PERMISSION });
-      return value || 'always';
-    } catch (_) {
-      return 'always';
-    }
-  }
-
-  /**
-   * Set desired user permission level
-   */
-  async setDesiredPermission(level) {
-    this.desiredPermission = level;
-    try {
-      await Preferences.set({ key: STORAGE_KEYS.DESIRED_PERMISSION, value: level });
-      if (level === 'always') {
-        if (!this.isNative && this.isTracking) {
-          await this.requestWakeLock();
-        }
-      } else if (level === 'denied') {
-        await this.stopTracking();
-      }
-    } catch (e) {
-      console.warn('[NativeLocation] setDesiredPermission error:', e);
-    }
-  }
-
-  /**
    * Check OS Location Permission Status
+   * Returns granular statuses:
+   * - foreground (boolean)
+   * - background (boolean)
+   * - backgroundSupported (boolean)
+   * - locationServicesEnabled (boolean)
+   * - serviceRunning (boolean)
+   * - isTrackingActive (boolean)
    */
   async checkPermissions() {
-    const desired = await this.getDesiredPermission();
-    this.desiredPermission = desired;
+    const env = this.getEnvironmentType();
+    const isAndroidNative = env === 'android';
+    const isIOSNative = env === 'ios';
 
-    if (!('geolocation' in navigator)) {
+    // 1. Real Native Android Permission Check via Capacitor Plugin
+    if (isAndroidNative) {
+      try {
+        const androidRes = await FamilyLocation.checkPermissions();
+        return {
+          platform: 'android',
+          envType: 'android',
+          foreground: Boolean(androidRes.foreground),
+          fineLocation: Boolean(androidRes.fineLocation),
+          coarseLocation: Boolean(androidRes.coarseLocation),
+          background: Boolean(androidRes.background),
+          backgroundSupported: true,
+          locationServicesEnabled: Boolean(androidRes.locationServicesEnabled),
+          serviceRunning: Boolean(androidRes.serviceRunning),
+          sdkVersion: androidRes.sdkVersion || 30,
+          isTrackingActive: this.isTracking,
+          lastLocation: await this.getLastKnownLocation()
+        };
+      } catch (err) {
+        console.warn('[NativeLocation] Android native plugin error, fallback:', err);
+      }
+    }
+
+    // 2. Native iOS Core Location Check
+    if (isIOSNative) {
+      let isGranted = false;
+      if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
+        try {
+          const res = await navigator.permissions.query({ name: 'geolocation' });
+          isGranted = res.state === 'granted';
+        } catch (_) {}
+      }
       return {
-        status: 'unsupported',
-        foreground: false,
-        background: false,
-        desired,
-        platform: this.platform,
-        hasWakeLock: Boolean(this.wakeLock)
+        platform: 'ios',
+        envType: 'ios',
+        foreground: isGranted,
+        background: false, // Needs Core Location Always Auth
+        backgroundSupported: true,
+        locationServicesEnabled: true,
+        serviceRunning: this.isTracking,
+        isTrackingActive: this.isTracking,
+        lastLocation: await this.getLastKnownLocation()
       };
     }
 
-    let isGranted = false;
+    // 3. Web Browser & Installed PWA
+    let foregroundGranted = false;
     let queryState = 'prompt';
 
-    try {
+    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
       if (navigator.permissions && navigator.permissions.query) {
-        const result = await navigator.permissions.query({ name: 'geolocation' });
-        queryState = result.state;
-        isGranted = result.state === 'granted';
-      }
-    } catch (_) {
-      // Fallback
-    }
-
-    // Determine background capability and active status
-    let backgroundGranted = false;
-    if (isGranted) {
-      if (desired === 'always') {
-        // In native, OS background permission is available; on Web, wakeLock/keep-alive ensures continuous tracking
-        backgroundGranted = true;
+        try {
+          const result = await navigator.permissions.query({ name: 'geolocation' });
+          queryState = result.state;
+          foregroundGranted = result.state === 'granted';
+        } catch (_) {}
       }
     }
 
     return {
+      platform: env === 'pwa' ? 'pwa' : 'web',
+      envType: env,
+      foreground: foregroundGranted,
       status: queryState,
-      foreground: isGranted,
-      background: backgroundGranted,
-      desired,
-      platform: this.platform,
-      hasWakeLock: Boolean(this.wakeLock)
+      background: false, // CRITICAL: NEVER claim background permission is granted in Web/PWA
+      backgroundSupported: false, // Web browsers cannot run background tracking daemons
+      locationServicesEnabled: true,
+      serviceRunning: false, // No native background service on web
+      isTrackingActive: this.isTracking,
+      hasWakeLock: Boolean(this.wakeLock),
+      lastLocation: await this.getLastKnownLocation()
     };
   }
 
   /**
-   * Request Location Permissions
+   * Request Foreground Location Permissions
    */
-  async requestPermissions(targetLevel = 'always') {
-    await this.setDesiredPermission(targetLevel);
+  async requestForegroundPermissions() {
+    const env = this.getEnvironmentType();
+    if (env === 'android') {
+      try {
+        const res = await FamilyLocation.requestForegroundPermissions();
+        return res;
+      } catch (err) {
+        console.warn('[NativeLocation] Android requestForegroundPermissions error:', err);
+      }
+    }
 
+    // Web / iOS fallback
     return new Promise((resolve) => {
       if (!navigator.geolocation) {
-        return resolve({ granted: false, error: 'Geolocation not supported' });
+        return resolve({ foreground: false, error: 'Geolocation not supported' });
       }
-
       navigator.geolocation.getCurrentPosition(
-        async () => {
-          if (targetLevel === 'always' && !this.isNative) {
-            await this.requestWakeLock();
-          }
-          resolve({ granted: true, status: 'granted', desired: targetLevel });
-        },
-        (err) => resolve({ granted: false, status: 'denied', code: err.code, error: err.message }),
+        () => resolve({ foreground: true, status: 'granted' }),
+        (err) => resolve({ foreground: false, status: 'denied', code: err.code, error: err.message }),
         { enableHighAccuracy: true, timeout: 10000 }
       );
     });
+  }
+
+  /**
+   * Request Background Location on Android
+   * On Android 11+ (API 30+), redirects to App Settings for "Allow all the time"
+   */
+  async requestBackgroundPermissions() {
+    const env = this.getEnvironmentType();
+    if (env === 'android') {
+      try {
+        return await FamilyLocation.requestBackgroundPermissions();
+      } catch (err) {
+        console.warn('[NativeLocation] Android requestBackgroundPermissions error:', err);
+      }
+    }
+    return { background: false };
+  }
+
+  /**
+   * Open Android Application Settings directly
+   */
+  async openAppSettings() {
+    const env = this.getEnvironmentType();
+    if (env === 'android') {
+      try {
+        await FamilyLocation.openAppSettings();
+      } catch (err) {
+        console.warn('[NativeLocation] openAppSettings error:', err);
+      }
+    }
+  }
+
+  /**
+   * Open Device Location Source Settings (GPS toggle)
+   */
+  async openLocationSettings() {
+    const env = this.getEnvironmentType();
+    if (env === 'android') {
+      try {
+        await FamilyLocation.openLocationSettings();
+      } catch (err) {
+        console.warn('[NativeLocation] openLocationSettings error:', err);
+      }
+    }
   }
 
   /**
@@ -268,8 +335,16 @@ class NativeLocationService {
     await Preferences.set({ key: STORAGE_KEYS.TRACKING_ENABLED, value: 'true' });
     await Preferences.set({ key: STORAGE_KEYS.TRACKING_MODE, value: mode });
 
-    // If desired permission is 'always' on Web, acquire Screen Wake Lock
-    if (this.desiredPermission === 'always' && !this.isNative) {
+    // On Android native, start the Android Location Foreground Service
+    if (this.isNative && this.platform === 'android') {
+      try {
+        await FamilyLocation.startForegroundService();
+        console.log('[NativeLocation] Android LocationForegroundService started.');
+      } catch (err) {
+        console.warn('[NativeLocation] Failed to start foreground service:', err.message);
+      }
+    } else {
+      // On Web, acquire wake lock to keep browser awake
       await this.requestWakeLock();
     }
 
@@ -278,7 +353,7 @@ class NativeLocationService {
     // Immediately acquire and send first position fix
     this.captureLocationFix();
 
-    // Setup periodic polling interval to guarantee background execution
+    // Setup periodic polling interval
     if (this.intervalTimer) clearInterval(this.intervalTimer);
     this.intervalTimer = setInterval(() => {
       if (!this.isPaused && this.isTracking) {
@@ -286,7 +361,7 @@ class NativeLocationService {
       }
     }, config.intervalMs);
 
-    // Also register native watchPosition for movement detection
+    // Register watchPosition for movement detection
     if (navigator.geolocation) {
       if (this.watchId != null) {
         navigator.geolocation.clearWatch(this.watchId);
@@ -303,7 +378,7 @@ class NativeLocationService {
       );
     }
 
-    console.log(`[NativeLocation] Tracking started in ${config.name} (${this.platform})`);
+    console.log(`[NativeLocation] Tracking started in ${config.name} (${this.getEnvironmentType()})`);
     return true;
   }
 
@@ -347,7 +422,7 @@ class NativeLocationService {
       is_charging: telemetry.isCharging ? 1 : 0,
       timestamp,
       tracking_mode: this.currentMode,
-      platform: this.platform,
+      platform: this.getEnvironmentType(),
     };
 
     // Save as last known location
@@ -378,7 +453,6 @@ class NativeLocationService {
       const { value } = await Preferences.get({ key: STORAGE_KEYS.OFFLINE_QUEUE });
       const queue = value ? JSON.parse(value) : [];
 
-      // Keep maximum 200 points to avoid unbounded storage
       if (queue.length > 200) {
         queue.shift();
       }
@@ -415,7 +489,6 @@ class NativeLocationService {
         try {
           await this.uploadFn(item);
         } catch (err) {
-          // If still failing, keep in remaining queue
           remaining.push(item);
         }
       }
@@ -466,6 +539,16 @@ class NativeLocationService {
       this.intervalTimer = null;
     }
 
+    // Stop Android Foreground Service if native
+    if (this.isNative && this.platform === 'android') {
+      try {
+        await FamilyLocation.stopForegroundService();
+        console.log('[NativeLocation] Android LocationForegroundService stopped.');
+      } catch (err) {
+        console.warn('[NativeLocation] Failed to stop foreground service:', err.message);
+      }
+    }
+
     this.releaseWakeLock();
 
     await Preferences.set({ key: STORAGE_KEYS.TRACKING_ENABLED, value: 'false' });
@@ -487,4 +570,3 @@ class NativeLocationService {
 
 export const nativeLocationService = new NativeLocationService();
 export default nativeLocationService;
-

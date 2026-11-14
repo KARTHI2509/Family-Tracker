@@ -1,63 +1,108 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useFamily } from '../../context/FamilyContext';
 import { nativeLocationService, TRACKING_MODES } from '../../services/nativeLocationService';
+import { App } from '@capacitor/app';
 import {
-  Shield, MapPin, Battery, BatteryCharging, Zap, Smartphone,
-  CheckCircle, AlertTriangle, XCircle, Info, ExternalLink, X, RefreshCw, Globe, ChevronDown, ChevronUp
+  Shield, MapPin, Battery, Smartphone, CheckCircle, AlertTriangle,
+  XCircle, Info, ExternalLink, X, RefreshCw, Globe, Navigation, Radio
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 export default function LocationSettingsModal({ isOpen, onClose }) {
   const { isTrackingEnabled, toggleTracking, trackingMode, setTrackingMode } = useFamily();
   const [permInfo, setPermInfo] = useState({
-    status: 'checking',
+    platform: 'web',
+    envType: 'web',
     foreground: false,
     background: false,
-    desired: 'always',
-    platform: 'web',
-    hasWakeLock: false
+    backgroundSupported: false,
+    locationServicesEnabled: true,
+    serviceRunning: false,
+    isTrackingActive: false,
+    lastLocation: null,
   });
-  const [desiredPermission, setDesiredPermission] = useState('always');
-  const [lastFix, setLastFix] = useState(null);
   const [requesting, setRequesting] = useState(false);
+  const [showRationale, setShowRationale] = useState(false);
   const [showBatteryNotice, setShowBatteryNotice] = useState(false);
-  const [showNativeGuide, setShowNativeGuide] = useState(false);
 
-  const refreshPermissions = async () => {
-    const info = await nativeLocationService.checkPermissions();
-    setPermInfo(info);
-    setDesiredPermission(info.desired || 'always');
-    const loc = await nativeLocationService.getLastKnownLocation();
-    setLastFix(loc);
-  };
+  const refreshPermissions = useCallback(async () => {
+    try {
+      const info = await nativeLocationService.checkPermissions();
+      setPermInfo(info);
+    } catch (err) {
+      console.warn('Failed to refresh permissions:', err);
+    }
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
       refreshPermissions();
+
+      // Listen for window focus to automatically refresh when user returns from Android Settings
+      const handleFocus = () => {
+        refreshPermissions();
+      };
+      window.addEventListener('focus', handleFocus);
+
+      // Capacitor App state change listener (when returning from Settings back to app)
+      let appListener = null;
+      try {
+        appListener = App.addListener('appStateChange', (state) => {
+          if (state.isActive) {
+            refreshPermissions();
+          }
+        });
+      } catch (_) {}
+
+      return () => {
+        window.removeEventListener('focus', handleFocus);
+        if (appListener && typeof appListener.remove === 'function') {
+          appListener.remove();
+        }
+      };
     }
-  }, [isOpen]);
+  }, [isOpen, refreshPermissions]);
 
   if (!isOpen) return null;
 
-  const handleSelectPermission = async (level) => {
-    setDesiredPermission(level);
+  const isAndroid = permInfo.envType === 'android';
+  const isIOS = permInfo.envType === 'ios';
+  const isPWA = permInfo.envType === 'pwa';
+  const isWeb = permInfo.envType === 'web' || isPWA;
+
+  const handleRequestForeground = async () => {
     setRequesting(true);
     try {
-      if (level === 'denied') {
-        await nativeLocationService.setDesiredPermission('denied');
-        if (isTrackingEnabled) {
-          toggleTracking(false);
-        }
-      } else {
-        await nativeLocationService.requestPermissions(level);
-        if (!isTrackingEnabled) {
-          toggleTracking(true);
-        }
-      }
+      await nativeLocationService.requestForegroundPermissions();
       await refreshPermissions();
     } finally {
       setRequesting(false);
     }
+  };
+
+  const handleEnableBackgroundLocation = async () => {
+    if (isAndroid) {
+      // Show educational rationale first if not already visible
+      if (!showRationale) {
+        setShowRationale(true);
+        return;
+      }
+      setRequesting(true);
+      try {
+        await nativeLocationService.requestBackgroundPermissions();
+        await refreshPermissions();
+      } finally {
+        setRequesting(false);
+      }
+    }
+  };
+
+  const handleOpenSettings = async () => {
+    await nativeLocationService.openAppSettings();
+  };
+
+  const handleOpenLocationSource = async () => {
+    await nativeLocationService.openLocationSettings();
   };
 
   const handleSelectMode = (modeId) => {
@@ -67,37 +112,44 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
     setTrackingMode(modeId);
   };
 
-  const isAndroid = permInfo.platform === 'android';
-  const isIOS = permInfo.platform === 'ios';
-  const isWeb = permInfo.platform === 'web';
+  const getPlatformLabel = () => {
+    if (isAndroid) return 'Native Android App';
+    if (isIOS) return 'Native iOS App';
+    if (isPWA) return 'Installed Web PWA';
+    return 'Web Browser';
+  };
 
-  const isBackgroundActive = permInfo.foreground && desiredPermission === 'always';
+  const lastFix = permInfo.lastLocation;
 
   return (
     <div className="modal-overlay" onClick={onClose} style={{ zIndex: 1200 }}>
       <div
         className="modal"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: '540px', width: '100%', maxHeight: '90dvh', overflowY: 'auto' }}
+        style={{ maxWidth: '560px', width: '100%', maxHeight: '90dvh', overflowY: 'auto' }}
       >
-        {/* Modal Header */}
+        {/* Header */}
         <div className="modal-header" style={{ marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{ background: 'rgba(99, 102, 241, 0.15)', padding: '8px', borderRadius: '10px' }}>
               <Shield size={22} className="text-primary" />
             </div>
             <div>
-              <h2 style={{ fontSize: '18px', margin: 0 }}>Location Permissions</h2>
+              <h2 style={{ fontSize: '18px', margin: 0 }}>Location & OS Permissions</h2>
               <div style={{ fontSize: '12px', color: 'var(--text-400)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span>Platform:</span>
-                <span style={{ textTransform: 'capitalize', color: 'var(--primary-400)', fontWeight: 600 }}>
-                  {permInfo.platform === 'web' ? 'Web Browser' : permInfo.platform}
+                <span
+                  style={{
+                    fontWeight: 700,
+                    color: isAndroid ? '#34D399' : isIOS ? '#60A5FA' : '#FBBF24',
+                    background: 'var(--bg-900)',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    border: '1px solid var(--glass-border)'
+                  }}
+                >
+                  {getPlatformLabel()}
                 </span>
-                {isWeb && (
-                  <span style={{ fontSize: '11px', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', padding: '1px 6px', borderRadius: '4px' }}>
-                    Screen WakeLock Active
-                  </span>
-                )}
               </div>
             </div>
           </div>
@@ -106,15 +158,15 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
           </button>
         </div>
 
-        {/* Operating System Permission Card */}
+        {/* 5-Status Granular Grid */}
         <div style={{ background: 'var(--bg-900)', border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-200)' }}>OS Permission Status</span>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-200)' }}>System Permission & Service Status</span>
             <button
               className="btn btn-ghost"
               onClick={refreshPermissions}
               style={{ padding: '4px 8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
-              title="Refresh permissions status"
+              title="Refresh permissions from OS"
             >
               <RefreshCw size={13} />
               <span>Refresh</span>
@@ -122,10 +174,10 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
-            {/* Foreground Status */}
+            {/* 1. Foreground Permission */}
             <div style={{ background: 'var(--bg-800)', padding: '12px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
-              <div style={{ fontSize: '11px', color: 'var(--text-400)', textTransform: 'uppercase' }}>While Using App</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', fontSize: '14px', fontWeight: 700 }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-400)', textTransform: 'uppercase' }}>1. While Using App</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', fontSize: '13px', fontWeight: 700 }}>
                 {permInfo.foreground ? (
                   <>
                     <CheckCircle size={16} color="var(--success-500)" />
@@ -134,37 +186,85 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
                 ) : (
                   <>
                     <XCircle size={16} color="var(--danger-500)" />
-                    <span style={{ color: 'var(--danger-500)' }}>Prompt / Denied</span>
+                    <span style={{ color: 'var(--danger-500)' }}>Denied / Prompt</span>
                   </>
                 )}
               </div>
+              <div style={{ fontSize: '10px', color: 'var(--text-400)', marginTop: '2px' }}>
+                {isAndroid ? 'ACCESS_FINE_LOCATION' : 'Browser Geolocation'}
+              </div>
             </div>
 
-            {/* Background Status */}
+            {/* 2. Background Permission */}
             <div style={{ background: 'var(--bg-800)', padding: '12px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
-              <div style={{ fontSize: '11px', color: 'var(--text-400)', textTransform: 'uppercase' }}>Background & Locked</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', fontSize: '14px', fontWeight: 700 }}>
-                {isBackgroundActive ? (
+              <div style={{ fontSize: '11px', color: 'var(--text-400)', textTransform: 'uppercase' }}>2. Background & Locked</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', fontSize: '13px', fontWeight: 700 }}>
+                {isWeb ? (
+                  <>
+                    <AlertTriangle size={16} color="var(--warning-500)" />
+                    <span style={{ color: 'var(--warning-500)' }}>Not Supported</span>
+                  </>
+                ) : permInfo.background ? (
                   <>
                     <CheckCircle size={16} color="var(--success-500)" />
                     <span style={{ color: 'var(--success-500)' }}>Always Allowed</span>
                   </>
-                ) : desiredPermission === 'while_using' ? (
-                  <>
-                    <Info size={16} color="var(--primary-400)" />
-                    <span style={{ color: 'var(--primary-400)' }}>Foreground Only</span>
-                  </>
                 ) : (
                   <>
                     <AlertTriangle size={16} color="var(--warning-500)" />
-                    <span style={{ color: 'var(--warning-500)' }}>Standard / App Only</span>
+                    <span style={{ color: 'var(--warning-500)' }}>Standard Only</span>
                   </>
                 )}
               </div>
-              <div style={{ fontSize: '10px', color: isBackgroundActive ? 'var(--success-400)' : 'var(--text-400)', marginTop: '2px' }}>
-                {isBackgroundActive
-                  ? (isWeb ? 'WakeLock Active (Tab Awake)' : 'Android Background Active')
-                  : (desiredPermission === 'while_using' ? 'Paused when minimized' : 'Select Always Allow below')}
+              <div style={{ fontSize: '10px', color: isWeb ? 'var(--warning-400)' : 'var(--text-400)', marginTop: '2px' }}>
+                {isWeb ? 'Browser sandbox limit' : 'ACCESS_BACKGROUND_LOCATION'}
+              </div>
+            </div>
+
+            {/* 3. Location Services (GPS Hardware) */}
+            <div style={{ background: 'var(--bg-800)', padding: '12px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-400)', textTransform: 'uppercase' }}>3. Location Services (GPS)</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', fontSize: '13px', fontWeight: 700 }}>
+                {permInfo.locationServicesEnabled ? (
+                  <>
+                    <CheckCircle size={16} color="var(--success-500)" />
+                    <span style={{ color: 'var(--success-500)' }}>Enabled</span>
+                  </>
+                ) : (
+                  <>
+                    <XCircle size={16} color="var(--danger-500)" />
+                    <span style={{ color: 'var(--danger-500)' }}>Disabled</span>
+                  </>
+                )}
+              </div>
+              {!permInfo.locationServicesEnabled && isAndroid && (
+                <button
+                  onClick={handleOpenLocationSource}
+                  style={{ fontSize: '10px', color: '#60a5fa', background: 'none', border: 'none', padding: 0, cursor: 'pointer', marginTop: '2px', textDecoration: 'underline' }}
+                >
+                  Turn On Location Services
+                </button>
+              )}
+            </div>
+
+            {/* 4. Native Foreground Tracking Service */}
+            <div style={{ background: 'var(--bg-800)', padding: '12px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-400)', textTransform: 'uppercase' }}>4. Native Tracking Service</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', fontSize: '13px', fontWeight: 700 }}>
+                {permInfo.serviceRunning ? (
+                  <>
+                    <Radio size={16} color="var(--success-500)" />
+                    <span style={{ color: 'var(--success-500)' }}>Active (Foreground Service)</span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--text-400)' }}></span>
+                    <span style={{ color: 'var(--text-400)' }}>Inactive</span>
+                  </>
+                )}
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--text-400)', marginTop: '2px' }}>
+                {isAndroid ? 'Status bar ongoing notification' : 'Browser loop'}
               </div>
             </div>
           </div>
@@ -172,195 +272,128 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
           {!permInfo.foreground && (
             <button
               className="btn btn-primary w-full mt-3"
-              onClick={() => handleSelectPermission('always')}
+              onClick={handleRequestForeground}
               disabled={requesting}
               style={{ fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
               <MapPin size={16} />
-              <span>{requesting ? 'Requesting OS Permission...' : 'Allow Location in OS'}</span>
+              <span>{requesting ? 'Requesting Permission...' : 'Grant While Using App Permission'}</span>
             </button>
           )}
         </div>
 
-        {/* Permission Level Selector (3-Tier Options) */}
-        <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-200)', marginBottom: '8px' }}>
-            Location Permission Preference
-          </label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {/* Always Allow in Background */}
-            <div
-              onClick={() => handleSelectPermission('always')}
-              style={{
-                padding: '12px 14px',
-                borderRadius: '10px',
-                border: '1px solid ' + (desiredPermission === 'always' ? 'var(--primary-500)' : 'var(--glass-border)'),
-                background: desiredPermission === 'always' ? 'rgba(79, 70, 229, 0.12)' : 'var(--bg-900)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                transition: 'all 0.15s'
-              }}
-            >
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontWeight: 700, fontSize: '13px', color: desiredPermission === 'always' ? '#fff' : 'var(--text-200)' }}>
-                    Always allow in background
-                  </span>
-                  <span style={{ fontSize: '10px', fontWeight: 700, background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', padding: '2px 6px', borderRadius: '4px' }}>
-                    Recommended
-                  </span>
-                </div>
-                <div style={{ fontSize: '12px', color: 'var(--text-400)', marginTop: '2px' }}>
-                  {isWeb
-                    ? 'Continuous live tracking with Screen WakeLock preventing sleep'
-                    : 'Continuous tracking even when phone is locked or app is minimized'}
-                </div>
+        {/* WEB & PWA LIMITATION NOTICE (Requirement 2 & 8: Never claim background permission on Web) */}
+        {isWeb && (
+          <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+              <div style={{ background: 'rgba(245, 158, 11, 0.2)', padding: '6px', borderRadius: '8px', marginTop: '2px' }}>
+                <Globe size={18} color="#FBBF24" />
               </div>
-              <input
-                type="radio"
-                name="desiredPermission"
-                checked={desiredPermission === 'always'}
-                onChange={() => handleSelectPermission('always')}
-                style={{ accentColor: 'var(--primary-500)', cursor: 'pointer' }}
-              />
-            </div>
-
-            {/* While using the app */}
-            <div
-              onClick={() => handleSelectPermission('while_using')}
-              style={{
-                padding: '12px 14px',
-                borderRadius: '10px',
-                border: '1px solid ' + (desiredPermission === 'while_using' ? 'var(--primary-500)' : 'var(--glass-border)'),
-                background: desiredPermission === 'while_using' ? 'rgba(79, 70, 229, 0.12)' : 'var(--bg-900)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                transition: 'all 0.15s'
-              }}
-            >
               <div>
-                <div style={{ fontWeight: 700, fontSize: '13px', color: desiredPermission === 'while_using' ? '#fff' : 'var(--text-200)' }}>
-                  While using the app
-                </div>
-                <div style={{ fontSize: '12px', color: 'var(--text-400)', marginTop: '2px' }}>
-                  Only updates your location when FamilyTracker is open on screen
-                </div>
-              </div>
-              <input
-                type="radio"
-                name="desiredPermission"
-                checked={desiredPermission === 'while_using'}
-                onChange={() => handleSelectPermission('while_using')}
-                style={{ accentColor: 'var(--primary-500)', cursor: 'pointer' }}
-              />
-            </div>
-
-            {/* Don't allow */}
-            <div
-              onClick={() => handleSelectPermission('denied')}
-              style={{
-                padding: '12px 14px',
-                borderRadius: '10px',
-                border: '1px solid ' + (desiredPermission === 'denied' ? 'var(--danger-500)' : 'var(--glass-border)'),
-                background: desiredPermission === 'denied' ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-900)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                transition: 'all 0.15s'
-              }}
-            >
-              <div>
-                <div style={{ fontWeight: 700, fontSize: '13px', color: desiredPermission === 'denied' ? 'var(--danger-400)' : 'var(--text-200)' }}>
-                  Don't allow
-                </div>
-                <div style={{ fontSize: '12px', color: 'var(--text-400)', marginTop: '2px' }}>
-                  Disables GPS location tracking completely
-                </div>
-              </div>
-              <input
-                type="radio"
-                name="desiredPermission"
-                checked={desiredPermission === 'denied'}
-                onChange={() => handleSelectPermission('denied')}
-                style={{ accentColor: 'var(--danger-500)', cursor: 'pointer' }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Informational Web vs Mobile Guide Banner */}
-        <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: '12px', padding: '14px', marginBottom: '16px' }}>
-          <div
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-            onClick={() => setShowNativeGuide(!showNativeGuide)}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#60A5FA', fontSize: '13px', fontWeight: 700 }}>
-              {isWeb ? <Globe size={16} /> : <Smartphone size={16} />}
-              <span>{isWeb ? 'How Background Tracking Works on Web vs Android' : 'Mobile Background Location Settings'}</span>
-            </div>
-            {showNativeGuide ? <ChevronUp size={16} color="#60A5FA" /> : <ChevronDown size={16} color="#60A5FA" />}
-          </div>
-
-          <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-300)', lineHeight: '1.6' }}>
-            {isWeb ? (
-              <>
-                <p style={{ margin: '0 0 6px' }}>
-                  You are viewing FamilyTracker in a <strong>Web Browser</strong>. Web security sandboxes don't have an OS background daemon when the browser is closed.
+                <h4 style={{ margin: '0 0 6px', fontSize: '14px', color: '#FCD34D' }}>
+                  Background Tracking Not Supported on Web/PWA
+                </h4>
+                <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--text-300)', lineHeight: '1.5' }}>
+                  Web browsers (including installed PWAs) run inside an operating system security sandbox. Web browsers <strong>cannot</strong> run continuous background services when minimized, closed, or when the phone screen is locked.
                 </p>
-                <div style={{ background: 'var(--bg-900)', padding: '10px', borderRadius: '8px', marginBottom: '6px' }}>
-                  <div style={{ color: 'var(--success-400)', fontWeight: 600, marginBottom: '2px' }}>
-                    ⚡ What's active on Web right now:
+                <div style={{ background: 'var(--bg-900)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '10px 12px', marginBottom: '10px' }}>
+                  <div style={{ color: '#fff', fontSize: '12px', fontWeight: 600, marginBottom: '2px' }}>
+                    📱 Install the Native Android Application
                   </div>
-                  <div>Screen WakeLock prevents your laptop/phone display from sleeping, guaranteeing continuous live GPS broadcasts while this browser tab stays open.</div>
+                  <div style={{ color: 'var(--text-400)', fontSize: '11px', lineHeight: '1.4' }}>
+                    To get guaranteed 24/7 continuous background tracking with a locked screen, use the native <strong>Android APK</strong>. It includes an official Android Foreground Service (`LocationForegroundService`) that runs in the status bar.
+                  </div>
                 </div>
-                {showNativeGuide && (
-                  <div style={{ background: 'var(--bg-900)', padding: '10px', borderRadius: '8px', marginTop: '6px' }}>
-                    <div style={{ color: '#93C5FD', fontWeight: 600, marginBottom: '2px' }}>
-                      📲 For 24/7 background tracking with screen locked in pocket:
-                    </div>
-                    <div>
-                      Install our native Android APK. On Android, go to <strong>Settings ➔ Apps ➔ FamilyTracker ➔ Permissions ➔ Location ➔ Select "Allow all the time"</strong>. The Android Foreground Service will track 24/7 with a persistent status bar notification.
-                    </div>
-                  </div>
-                )}
-              </>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* NATIVE ANDROID BACKGROUND LOCATION CONFIGURATION (Requirement 3 & 4) */}
+        {isAndroid && (
+          <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#60A5FA', fontSize: '14px', fontWeight: 700, marginBottom: '8px' }}>
+              <Smartphone size={18} />
+              <span>Android Background Location Support</span>
+            </div>
+
+            {permInfo.background ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--success-400)', fontSize: '13px', fontWeight: 600 }}>
+                <CheckCircle size={16} />
+                <span>"Allow all the time" is granted! Background location sharing is fully supported.</span>
+              </div>
             ) : (
-              <p style={{ margin: 0 }}>
-                {isAndroid
-                  ? 'To ensure continuous location sharing when your screen is locked, go to your phone Settings ➔ Apps ➔ FamilyTracker ➔ Permissions ➔ Location ➔ Select "Allow all the time".'
-                  : 'To maintain emergency tracking while minimized, open iPhone Settings ➔ FamilyTracker ➔ Location ➔ Select "Always".'}
-              </p>
+              <div>
+                {/* Educational Rationale Box (Required before requesting background location) */}
+                <div style={{ background: 'var(--bg-900)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '12px', marginBottom: '12px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#fff', marginBottom: '4px' }}>
+                    Why Background Location is Needed
+                  </div>
+                  <p style={{ fontSize: '11px', color: 'var(--text-300)', lineHeight: '1.5', margin: 0 }}>
+                    FamilyTracker requires <strong>"Allow all the time"</strong> permission so your emergency contacts and family members can view your live location when your phone is in your pocket, screen is locked, or during an active SOS emergency.
+                  </p>
+                </div>
+
+                {/* Android 11+ Guidance (Requirement 4) */}
+                <div style={{ background: 'rgba(0, 0, 0, 0.2)', padding: '10px 12px', borderRadius: '8px', fontSize: '11px', color: '#93C5FD', marginBottom: '12px', lineHeight: '1.5' }}>
+                  <strong>Android 11+ Requirement:</strong> Modern Android requires selecting "Allow all the time" manually in system settings.
+                  <div style={{ marginTop: '4px', fontWeight: 600 }}>
+                    Settings ➔ Apps ➔ FamilyTracker ➔ Permissions ➔ Location ➔ Select "Allow all the time"
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleEnableBackgroundLocation}
+                    disabled={requesting}
+                    style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Shield size={15} />
+                    <span>Enable Background Location</span>
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={handleOpenSettings}
+                    style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid var(--glass-border)' }}
+                  >
+                    <ExternalLink size={15} />
+                    <span>Open App Settings</span>
+                  </button>
+                </div>
+              </div>
             )}
           </div>
-        </div>
+        )}
 
-        {/* Live Tracking Status & Telemetry */}
+        {/* DISTINCTION: PERMISSION GRANTED vs ACTUAL TRACKING ACTIVE (Requirement 6 & 9) */}
         <div style={{ background: 'var(--bg-900)', border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-200)' }}>Live Tracking Status</span>
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-200)' }}>Live Location Broadcasting</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-400)' }}>
+                {isTrackingEnabled ? 'Transmitting coordinates to your family circle' : 'Location sharing is currently stopped'}
+              </div>
+            </div>
             <span
               style={{
-                fontSize: '12px',
+                fontSize: '11px',
                 fontWeight: 700,
                 color: isTrackingEnabled ? 'var(--success-400)' : 'var(--text-400)',
                 background: isTrackingEnabled ? 'rgba(16, 185, 129, 0.15)' : 'var(--bg-800)',
-                padding: '3px 10px',
+                padding: '4px 10px',
                 borderRadius: '9999px',
                 border: '1px solid ' + (isTrackingEnabled ? 'rgba(16, 185, 129, 0.3)' : 'var(--glass-border)')
               }}
             >
-              {isTrackingEnabled ? '● BROADCASTING LIVE' : '○ TRACKING OFF'}
+              {isTrackingEnabled ? '● BROADCASTING ACTIVE' : '○ STOPPED'}
             </span>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', textAlign: 'center', marginTop: '10px' }}>
+          {/* 5. Last Successful Location Update (Requirement 5) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', textAlign: 'center', marginTop: '12px' }}>
             <div style={{ background: 'var(--bg-800)', padding: '10px 8px', borderRadius: '8px' }}>
-              <div style={{ fontSize: '11px', color: 'var(--text-400)' }}>Last Update</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-400)' }}>5. Last Update</div>
               <div style={{ fontSize: '12px', fontWeight: 700, color: '#fff', marginTop: '2px' }}>
                 {lastFix ? formatDistanceToNow(new Date(lastFix.timestamp), { addSuffix: true }) : 'Pending'}
               </div>
@@ -385,7 +418,7 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
         {/* Tracking Frequency & Battery Modes */}
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-200)', marginBottom: '8px' }}>
-            Battery & Refresh Modes
+            Refresh & Battery Frequency Modes
           </label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {Object.values(TRACKING_MODES).map((mode) => {
@@ -434,7 +467,7 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
           )}
         </div>
 
-        {/* Master Location Sharing Toggle */}
+        {/* Master Location Sharing Consent Button (Requirement 9) */}
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
           <button
             className={`btn ${isTrackingEnabled ? 'btn-danger' : 'btn-primary'} w-full`}
