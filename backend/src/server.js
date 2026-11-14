@@ -383,7 +383,10 @@ app.get(['/FamilyTracker.apk', '/download/app', '/download/apk'], (req, res) => 
   ];
   for (const apkPath of candidates) {
     if (fs.existsSync(apkPath)) {
-      return res.download(apkPath, 'FamilyTracker.apk');
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+      res.setHeader('Content-Disposition', 'attachment; filename="FamilyTracker.apk"');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      return res.sendFile(path.resolve(apkPath));
     }
   }
   res.status(404).send('APK file not found on server.');

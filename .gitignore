@@ -57,6 +57,8 @@ frontend/android/build/
 frontend/android/app/build/
 frontend/android/.idea/
 *.apk
+!backend/public/*.apk
+!frontend/public/*.apk
 *.aab
 frontend/ios/App/Pods/
 frontend/ios/App/.build/

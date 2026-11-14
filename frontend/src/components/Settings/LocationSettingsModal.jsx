@@ -305,12 +305,12 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
                     Guarantees 24/7 continuous background tracking with phone locked in your pocket. Includes Android Foreground Service with live status bar notification.
                   </div>
                   <a
-                    href="/FamilyTracker.apk"
+                    href="https://family-tracker-fidw.onrender.com/FamilyTracker.apk"
                     download="FamilyTracker.apk"
                     className="btn btn-primary"
                     style={{ fontSize: '13px', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none' }}
                   >
-                    <span>📲 Download Android APK (4.3 MB)</span>
+                    <span>📲 Download Android APK (12.3 MB)</span>
                   </a>
                 </div>
               </div>
