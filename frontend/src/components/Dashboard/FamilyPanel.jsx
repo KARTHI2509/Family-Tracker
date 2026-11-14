@@ -12,9 +12,10 @@ export default function FamilyPanel({
   selectedMemberId,
   onOpenManagement,
   onOpenSwitch,
-  onOpenLeave
+  onOpenLeave,
+  onOpenMyFamilies
 }) {
-  const { members, onlineUsers, activeSOSEvents, getInviteCode, familyDetails } = useFamily();
+  const { members, onlineUsers, activeSOSEvents, getInviteCode, familyDetails, myFamilies = [] } = useFamily();
   const { user } = useAuth();
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
@@ -113,8 +114,29 @@ export default function FamilyPanel({
           )}
         </div>
 
-        {/* Quick Management & Switch Actions */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '10px' }}>
+        {/* Quick Management & Multi-Family Actions */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(95px, 1fr))', gap: '6px', marginTop: '10px' }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={onOpenMyFamilies}
+            style={{
+              padding: '6px 8px',
+              fontSize: '11px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              background: 'rgba(99, 102, 241, 0.25)',
+              borderColor: 'rgba(99, 102, 241, 0.4)',
+              color: '#C7D2FE'
+            }}
+            title="View All My Families or Create Another Circle"
+          >
+            <Users size={13} />
+            <span>My Families ({myFamilies.length})</span>
+          </button>
+
           <button
             type="button"
             className="btn btn-secondary"
@@ -147,7 +169,7 @@ export default function FamilyPanel({
             }}
           >
             <RefreshCw size={13} />
-            <span>Switch Family</span>
+            <span>Switch</span>
           </button>
         </div>
       </div>

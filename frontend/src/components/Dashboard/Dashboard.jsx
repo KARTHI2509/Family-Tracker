@@ -13,6 +13,7 @@ import FamilyManagementModal from '../Family/FamilyManagementModal';
 import SwitchFamilyModal from '../Family/SwitchFamilyModal';
 import LeaveFamilyModal from '../Family/LeaveFamilyModal';
 import LocationConsentModal from '../Family/LocationConsentModal';
+import MyFamiliesModal from '../Family/MyFamiliesModal';
 import AppUpdateModal from '../Common/AppUpdateModal';
 import { appUpdateService } from '../../services/appUpdateService';
 import { useFamily } from '../../context/FamilyContext';
@@ -31,37 +32,26 @@ export default function Dashboard() {
   const [focusedCoord, setFocusedCoord] = useState(null);
 
   // Family Management Modals
+  const [isMyFamiliesOpen, setIsMyFamiliesOpen] = useState(false);
   const [isFamilyManagementOpen, setIsFamilyManagementOpen] = useState(false);
   const [isSwitchFamilyOpen, setIsSwitchFamilyOpen] = useState(false);
   const [isLeaveFamilyOpen, setIsLeaveFamilyOpen] = useState(false);
 
-  // App Update Modal
+  // App Update Modal (MANUAL USER TRIGGER ONLY)
   const [updateInfo, setUpdateInfo] = useState(null);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
-
-  useEffect(() => {
-    // Automatically check for app updates shortly after startup
-    const timer = setTimeout(async () => {
-      try {
-        const info = await appUpdateService.checkForUpdate();
-        if (info && info.updateAvailable) {
-          setUpdateInfo(info);
-          setIsUpdateModalOpen(true);
-        }
-      } catch (err) {
-        console.warn('Initial update check error:', err);
-      }
-    }, 2500);
-
-    return () => clearTimeout(timer);
-  }, []);
+  const [updateFeedbackMessage, setUpdateFeedbackMessage] = useState('');
 
   const handleManualCheckUpdate = async () => {
     try {
-      const info = await appUpdateService.checkForUpdate(true);
-      if (info) {
+      const info = await appUpdateService.checkForUpdate();
+      if (info && info.updateAvailable) {
         setUpdateInfo(info);
         setIsUpdateModalOpen(true);
+      } else {
+        const verName = info?.installedVersion?.versionName || '1.1.0';
+        setUpdateFeedbackMessage(`You're using the latest version of FamilyTracker (v${verName}).`);
+        setTimeout(() => setUpdateFeedbackMessage(''), 4000);
       }
     } catch (err) {
       console.warn('Manual update check error:', err);
@@ -124,8 +114,32 @@ export default function Dashboard() {
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         familyName={user?.family_name || 'My Family Circle'}
         onOpenFamilyManagement={() => setIsFamilyManagementOpen(true)}
+        onOpenMyFamilies={() => setIsMyFamiliesOpen(true)}
         onCheckUpdate={handleManualCheckUpdate}
       />
+
+      {/* Manual Update Check Feedback Banner */}
+      {updateFeedbackMessage && (
+        <div
+          style={{
+            background: 'rgba(16, 185, 129, 0.95)',
+            color: '#FFFFFF',
+            padding: '8px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            fontSize: '13px',
+            fontWeight: 600,
+            zIndex: 950,
+            boxShadow: 'var(--shadow-md)',
+            animation: 'fadeIn .2s ease'
+          }}
+        >
+          <CheckCircle size={16} />
+          <span>{updateFeedbackMessage}</span>
+        </div>
+      )}
 
       {/* Emergency Alert Banner if any SOS is active */}
       {activeSOSCount > 0 && (
@@ -237,6 +251,7 @@ export default function Dashboard() {
                 onSelectMember={handleSelectMember}
                 selectedMemberId={selectedMember?.id}
                 onOpenManagement={() => setIsFamilyManagementOpen(true)}
+                onOpenMyFamilies={() => setIsMyFamiliesOpen(true)}
                 onOpenSwitch={() => setIsSwitchFamilyOpen(true)}
                 onOpenLeave={() => setIsLeaveFamilyOpen(true)}
               />
@@ -325,12 +340,21 @@ export default function Dashboard() {
         isGeofenceDrawerOpen={isGeofenceDrawerOpen}
       />
 
+      {/* My Families Multi-Circle Modal */}
+      <MyFamiliesModal
+        isOpen={isMyFamiliesOpen}
+        onClose={() => setIsMyFamiliesOpen(false)}
+        onOpenManage={() => setIsFamilyManagementOpen(true)}
+        onOpenLeave={() => setIsLeaveFamilyOpen(true)}
+      />
+
       {/* Family Circle Management Modal */}
       <FamilyManagementModal
         isOpen={isFamilyManagementOpen}
         onClose={() => setIsFamilyManagementOpen(false)}
         onOpenSwitch={() => setIsSwitchFamilyOpen(true)}
         onOpenLeave={() => setIsLeaveFamilyOpen(true)}
+        onOpenMyFamilies={() => setIsMyFamiliesOpen(true)}
       />
 
       {/* Switch Family Modal */}

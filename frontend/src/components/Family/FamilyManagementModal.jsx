@@ -10,9 +10,10 @@ export default function FamilyManagementModal({
   isOpen,
   onClose,
   onOpenSwitch,
-  onOpenLeave
+  onOpenLeave,
+  onOpenMyFamilies
 }) {
-  const { familyDetails, members, onlineUsers } = useFamily();
+  const { familyDetails, members, onlineUsers, myFamilies = [] } = useFamily();
   const { user } = useAuth();
   const [copied, setCopied] = useState(false);
 
@@ -269,6 +270,31 @@ export default function FamilyManagementModal({
             borderTop: '1px solid var(--glass-border)'
           }}
         >
+          {/* View All My Families Action */}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              onClose();
+              if (onOpenMyFamilies) onOpenMyFamilies();
+            }}
+            style={{
+              padding: '12px 16px',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              gridColumn: '1 / -1',
+              background: 'rgba(99, 102, 241, 0.15)',
+              borderColor: 'rgba(99, 102, 241, 0.4)',
+              color: '#C7D2FE'
+            }}
+          >
+            <Users size={16} color="#818CF8" />
+            <span>My Families ({myFamilies.length}) & Create Circles</span>
+          </button>
+
           {/* Switch Family Action */}
           <button
             type="button"

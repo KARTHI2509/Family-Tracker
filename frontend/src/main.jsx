@@ -4,30 +4,16 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './App.css';
 
-// PWA Service Worker Registration
+// PWA Service Worker Registration (silent on startup, manual check only)
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js')
       .then((reg) => {
-        // Periodically check for application updates
-        reg.update().catch(() => {});
-
-        reg.onupdatefound = () => {
-          const installingWorker = reg.installing;
-          if (installingWorker) {
-            installingWorker.onstatechange = () => {
-              if (installingWorker.state === 'installed') {
-                if (navigator.serviceWorker.controller) {
-                  console.log('🔄 New update available for FamilyTracker');
-                  window.dispatchEvent(new CustomEvent('pwa-update-available', { detail: reg }));
-                } else {
-                  console.log('⚡ FamilyTracker installed and ready for offline use');
-                }
-              }
-            };
-          }
-        };
+        // Registered successfully - manual update checks will call reg.update()
+        if (reg.waiting) {
+          console.log('⚡ A pending service worker is waiting for user activation');
+        }
       })
       .catch((err) => {
         console.warn('Service worker registration failed:', err);

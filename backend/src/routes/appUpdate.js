@@ -24,6 +24,7 @@ const APP_RELEASE_INFO = {
  * Retrieve latest version information and release notes
  */
 router.get('/version', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.json(APP_RELEASE_INFO);
 });
 
@@ -33,6 +34,7 @@ router.get('/version', (req, res) => {
  * Query params: platform, versionCode, versionName
  */
 router.get('/check-update', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   const currentVersionCode = parseInt(req.query.versionCode, 10) || 1;
   const currentVersionName = req.query.versionName || '1.0.0';
   const platform = (req.query.platform || 'web').toLowerCase();

@@ -201,7 +201,7 @@ export default function AppUpdateModal({ isOpen, onClose, updateData }) {
             ) : (
               <>
                 <Download size={16} />
-                <span>{downloadStarted ? 'Downloading...' : 'Update Now (4.3 MB)'}</span>
+                <span>{downloadStarted ? 'Downloading...' : `Update Now (${latest.fileSizeBytes ? (latest.fileSizeBytes / (1024 * 1024)).toFixed(1) + ' MB' : '12.3 MB'})`}</span>
               </>
             )}
           </button>

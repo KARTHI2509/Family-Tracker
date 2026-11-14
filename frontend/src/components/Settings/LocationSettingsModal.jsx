@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useFamily } from '../../context/FamilyContext';
 import { nativeLocationService, TRACKING_MODES } from '../../services/nativeLocationService';
+import { appUpdateService } from '../../services/appUpdateService';
+import { APP_VERSION, APP_VERSION_CODE } from '../../version';
 import { App } from '@capacitor/app';
 import {
   Shield, MapPin, Battery, Smartphone, CheckCircle, AlertTriangle,
-  XCircle, Info, ExternalLink, X, RefreshCw, Globe, Navigation, Radio
+  XCircle, Info, ExternalLink, X, RefreshCw, Globe, Navigation, Radio,
+  Sparkles, CheckCircle2
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -24,6 +27,41 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
   const [requesting, setRequesting] = useState(false);
   const [showRationale, setShowRationale] = useState(false);
   const [showBatteryNotice, setShowBatteryNotice] = useState(false);
+
+  // Application Updates State
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState(null);
+  const [lastCheckedTime, setLastCheckedTime] = useState(() => localStorage.getItem('ft_last_update_check'));
+
+  const handleCheckForUpdates = async () => {
+    setCheckingUpdate(true);
+    setUpdateStatus(null);
+    try {
+      const res = await appUpdateService.checkForUpdate({ manual: true });
+      const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setLastCheckedTime(nowStr);
+      localStorage.setItem('ft_last_update_check', nowStr);
+      if (res && res.updateAvailable) {
+        setUpdateStatus({
+          upToDate: false,
+          message: `New version v${res.latestRelease?.latestVersion} is available!`
+        });
+      } else {
+        setUpdateStatus({
+          upToDate: true,
+          message: `You're using the latest version of FamilyTracker (v${APP_VERSION}).`
+        });
+      }
+    } catch (err) {
+      setUpdateStatus({
+        upToDate: false,
+        isError: true,
+        message: 'Could not reach update server. Please check your network connection.'
+      });
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const refreshPermissions = useCallback(async () => {
     try {
@@ -305,13 +343,16 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
                     Guarantees 24/7 continuous background tracking with phone locked in your pocket. Includes Android Foreground Service with live status bar notification.
                   </div>
                   <a
-                    href="https://family-tracker-fidw.onrender.com/FamilyTracker.apk"
+                    href="/FamilyTracker.apk"
                     download="FamilyTracker.apk"
                     className="btn btn-primary"
                     style={{ fontSize: '13px', padding: '10px 16px', display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxSizing: 'border-box' }}
                   >
                     <span>📲 Download Android APK (12.3 MB)</span>
                   </a>
+                  <div style={{ marginTop: '8px', textAlign: 'center', fontSize: '11px', color: 'var(--text-400)' }}>
+                    Backup server download: <a href="https://family-tracker-fidw.onrender.com/FamilyTracker.apk" target="_blank" rel="noopener noreferrer" style={{ color: '#60A5FA', textDecoration: 'underline' }}>Mirror Link</a>
+                  </div>
                 </div>
               </div>
             </div>
@@ -472,6 +513,55 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
             <div style={{ marginTop: '8px', padding: '10px 12px', borderRadius: '8px', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', color: '#FCD34D', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <AlertTriangle size={15} />
               <span>High Accuracy mode updates GPS every 60s and will consume more battery. Recommended during active commutes or journeys.</span>
+            </div>
+          )}
+        </div>
+
+        {/* Application Updates Section (Requirement 2: Manual Update Check) */}
+        <div style={{ background: 'var(--bg-900)', border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: updateStatus ? '10px' : '0', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ background: 'rgba(99, 102, 241, 0.15)', padding: '6px', borderRadius: '8px' }}>
+                <Sparkles size={16} color="#818CF8" />
+              </div>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff' }}>
+                  Application Updates
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-400)' }}>
+                  Installed: v{APP_VERSION} (Build {APP_VERSION_CODE}) {lastCheckedTime ? `• Checked ${lastCheckedTime}` : ''}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={handleCheckForUpdates}
+              disabled={checkingUpdate}
+              style={{ fontSize: '12px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <RefreshCw size={13} className={checkingUpdate ? 'spin' : ''} />
+              <span>{checkingUpdate ? 'Checking...' : 'Check for Updates'}</span>
+            </button>
+          </div>
+
+          {updateStatus && (
+            <div
+              style={{
+                background: updateStatus.upToDate ? 'rgba(16, 185, 129, 0.12)' : updateStatus.isError ? 'rgba(239, 68, 68, 0.12)' : 'rgba(59, 130, 246, 0.12)',
+                border: `1px solid ${updateStatus.upToDate ? 'rgba(16, 185, 129, 0.3)' : updateStatus.isError ? 'rgba(239, 68, 68, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`,
+                borderRadius: '8px',
+                padding: '10px 12px',
+                fontSize: '12px',
+                color: updateStatus.upToDate ? '#A7F3D0' : updateStatus.isError ? '#FCA5A5' : '#93C5FD',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              {updateStatus.upToDate ? <CheckCircle size={15} color="#10B981" /> : updateStatus.isError ? <AlertTriangle size={15} color="#EF4444" /> : <Sparkles size={15} color="#60A5FA" />}
+              <span>{updateStatus.message}</span>
             </div>
           )}
         </div>

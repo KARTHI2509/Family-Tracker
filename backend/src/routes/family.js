@@ -11,42 +11,69 @@ router.use(authMiddleware);
 
 /**
  * POST /api/family/create
- * Create a new family using an atomic database transaction.
+ * Create a new family circle using an atomic database transaction.
+ * Supports multiple family creation - does NOT remove from existing families!
  */
 router.post('/create', (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, description, group_type, groupType } = req.body;
 
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'Valid family name is required.' });
     }
 
-    // Refresh user state
-    const currentUser = db.prepare('SELECT id, family_id FROM users WHERE id = ?').get(req.user.id);
-    if (currentUser.family_id) {
-      return res.status(400).json({ error: 'You are already a member of a family. Leave or switch your current family first.' });
-    }
+    const cleanName = name.trim();
+    const type = (group_type || groupType || 'FAMILY').toUpperCase();
+    const desc = description ? description.trim() : '';
 
     // Generate unique 6-character alphanumeric invite code
     let inviteCode = uuidv4().replace(/[^a-zA-Z0-9]/g, '').substring(0, 6).toUpperCase();
-    while (db.prepare('SELECT id FROM families WHERE invite_code = ?').get(inviteCode)) {
+    while (db.prepare('SELECT id FROM families WHERE invite_code = ?').get(inviteCode) ||
+           db.prepare('SELECT id FROM groups WHERE invite_code = ?').get(inviteCode)) {
       inviteCode = uuidv4().replace(/[^a-zA-Z0-9]/g, '').substring(0, 6).toUpperCase();
     }
 
     let family;
     db.transaction(() => {
+      // 1. Insert into families table
       const familyStmt = db.prepare(`
         INSERT INTO families (name, invite_code, created_by)
         VALUES (?, ?, ?)
       `);
-      const familyResult = familyStmt.run(name.trim(), inviteCode, req.user.id);
+      const familyResult = familyStmt.run(cleanName, inviteCode, req.user.id);
       const familyId = familyResult.lastInsertRowid;
 
+      // 2. Mirror into groups table for multi-group architecture
+      try {
+        db.prepare(`
+          INSERT INTO groups (id, name, description, group_type, avatar_color, icon, created_by, invite_code)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(familyId, cleanName, desc, type, '#4F46E5', 'Users', req.user.id, inviteCode);
+      } catch (_) {
+        db.prepare(`
+          INSERT INTO groups (name, description, group_type, avatar_color, icon, created_by, invite_code)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(cleanName, desc, type, '#4F46E5', 'Users', req.user.id, inviteCode);
+      }
+
+      // 3. Add creator as OWNER in group_members (preserves all existing memberships!)
+      db.prepare(`
+        INSERT OR IGNORE INTO group_members (group_id, user_id, role, membership_status)
+        VALUES (?, ?, 'OWNER', 'ACTIVE')
+      `).run(familyId, req.user.id);
+
+      // 4. Create default location sharing settings
+      db.prepare(`
+        INSERT OR IGNORE INTO group_location_settings (group_id, user_id, sharing_enabled, history_enabled)
+        VALUES (?, ?, 1, 1)
+      `).run(familyId, req.user.id);
+
+      // 5. Update user's active family_id to the newly created family
       db.prepare('UPDATE users SET family_id = ? WHERE id = ?').run(familyId, req.user.id);
       family = db.prepare('SELECT * FROM families WHERE id = ?').get(familyId);
     })();
 
-    // Migrate socket room for user
+    // Migrate/join socket rooms for user
     const migrateSockets = req.app.get('migrateUserFamilySockets');
     if (migrateSockets) {
       migrateSockets(req.user.id, null, family.id);
@@ -54,7 +81,11 @@ router.post('/create', (req, res) => {
 
     res.status(201).json({
       message: 'Family created successfully.',
-      family,
+      family: {
+        ...family,
+        role: 'owner',
+        is_owner: true
+      },
       invite_code: family.invite_code,
       inviteCode: family.invite_code
     });
@@ -67,6 +98,7 @@ router.post('/create', (req, res) => {
 /**
  * POST /api/family/join
  * Join an existing family by invite code.
+ * Supports multiple family memberships without leaving existing families!
  */
 router.post('/join', (req, res) => {
   try {
@@ -78,32 +110,55 @@ router.post('/join', (req, res) => {
 
     const cleanCode = rawCode.trim().toUpperCase();
 
-    // Verify current user isn't already in a family
-    const currentUser = db.prepare('SELECT id, family_id FROM users WHERE id = ?').get(req.user.id);
-    if (currentUser.family_id) {
-      return res.status(400).json({ error: 'You are already in a family. Use Switch Family to change your circle.' });
+    // Check families or groups
+    let family = db.prepare('SELECT * FROM families WHERE invite_code = ?').get(cleanCode);
+    if (!family) {
+      const grp = db.prepare('SELECT * FROM groups WHERE invite_code = ?').get(cleanCode);
+      if (grp) {
+        family = { id: grp.id, name: grp.name, invite_code: grp.invite_code, created_by: grp.created_by };
+      }
     }
 
-    const family = db.prepare('SELECT * FROM families WHERE invite_code = ?').get(cleanCode);
     if (!family) {
       return res.status(404).json({ error: 'Invalid invite code. No family found with this code.' });
     }
 
+    // Verify user is not already a member of THIS specific family
+    const existingMembership = db.prepare(`
+      SELECT id FROM group_members WHERE group_id = ? AND user_id = ? AND membership_status = 'ACTIVE'
+    `).get(family.id, req.user.id);
+
+    if (existingMembership) {
+      return res.status(400).json({ error: 'You are already a member of this family.' });
+    }
+
     let members;
     db.transaction(() => {
+      // 1. Add to group_members (preserves all existing family memberships!)
+      db.prepare(`
+        INSERT INTO group_members (group_id, user_id, role, membership_status)
+        VALUES (?, ?, 'MEMBER', 'ACTIVE')
+        ON CONFLICT(group_id, user_id) DO UPDATE SET membership_status = 'ACTIVE'
+      `).run(family.id, req.user.id);
+
+      // 2. Add location sharing settings
+      db.prepare(`
+        INSERT OR IGNORE INTO group_location_settings (group_id, user_id, sharing_enabled, history_enabled)
+        VALUES (?, ?, 1, 1)
+      `).run(family.id, req.user.id);
+
+      // 3. Set newly joined family as active family
       db.prepare('UPDATE users SET family_id = ? WHERE id = ?').run(family.id, req.user.id);
+
       members = db.prepare(`
-        SELECT id, name, email, phone, avatar_color, created_at
-        FROM users WHERE family_id = ?
+        SELECT u.id, u.name, u.email, u.phone, u.avatar_color, u.created_at, gm.role
+        FROM group_members gm
+        JOIN users u ON u.id = gm.user_id
+        WHERE gm.group_id = ? AND gm.membership_status = 'ACTIVE'
       `).all(family.id);
     })();
 
-    // Migrate sockets and notify family
-    const migrateSockets = req.app.get('migrateUserFamilySockets');
-    if (migrateSockets) {
-      migrateSockets(req.user.id, null, family.id);
-    }
-
+    // Notify family socket room
     const io = req.app.get('io');
     if (io) {
       io.to(`family:${family.id}`).emit('member:joined', {
@@ -114,16 +169,136 @@ router.post('/join', (req, res) => {
         avatarColor: req.user.avatar_color,
         familyId: family.id
       });
+      io.to(`group:${family.id}`).emit('member:joined', {
+        userId: req.user.id,
+        user_id: req.user.id,
+        name: req.user.name,
+        email: req.user.email,
+        avatarColor: req.user.avatar_color,
+        groupId: family.id
+      });
     }
 
     res.json({
       message: 'Successfully joined the family.',
-      family,
+      family: {
+        ...family,
+        role: 'member',
+        is_owner: false
+      },
       members
     });
   } catch (err) {
     console.error('Join family error:', err);
     res.status(500).json({ error: 'Internal server error while joining family.' });
+  }
+});
+
+/**
+ * GET /api/family/my-families
+ * Retrieve every family circle the authenticated user belongs to.
+ */
+router.get('/my-families', (req, res) => {
+  try {
+    const currentUser = db.prepare('SELECT id, family_id FROM users WHERE id = ?').get(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    // Auto backfill if user has a family_id not yet in group_members
+    if (currentUser.family_id) {
+      const existsInGm = db.prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?').get(currentUser.family_id, currentUser.id);
+      if (!existsInGm) {
+        const fam = db.prepare('SELECT id, created_by FROM families WHERE id = ?').get(currentUser.family_id);
+        if (fam) {
+          const role = fam.created_by === currentUser.id ? 'OWNER' : 'MEMBER';
+          db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id, role, membership_status) VALUES (?, ?, ?, ?)').run(fam.id, currentUser.id, role, 'ACTIVE');
+          db.prepare('INSERT OR IGNORE INTO group_location_settings (group_id, user_id, sharing_enabled, history_enabled) VALUES (?, ?, 1, 1)').run(fam.id, currentUser.id);
+        }
+      }
+    }
+
+    const families = db.prepare(`
+      SELECT 
+        f.id,
+        f.name,
+        f.invite_code,
+        f.created_by,
+        f.created_at,
+        COALESCE(gm.role, CASE WHEN f.created_by = ? THEN 'OWNER' ELSE 'MEMBER' END) as role,
+        COALESCE(g.description, '') as description,
+        COALESCE(g.group_type, 'FAMILY') as group_type,
+        COALESCE(g.avatar_color, '#4F46E5') as avatar_color,
+        COALESCE(g.icon, 'Users') as icon,
+        (SELECT COUNT(*) FROM group_members WHERE group_id = f.id AND membership_status = 'ACTIVE') as member_count,
+        CASE WHEN f.id = ? THEN 1 ELSE 0 END as is_active,
+        CASE WHEN f.created_by = ? OR gm.role = 'OWNER' THEN 1 ELSE 0 END as is_owner
+      FROM group_members gm
+      JOIN families f ON f.id = gm.group_id
+      LEFT JOIN groups g ON g.id = f.id
+      WHERE gm.user_id = ? AND gm.membership_status = 'ACTIVE'
+      ORDER BY is_active DESC, f.created_at DESC
+    `).all(req.user.id, currentUser.family_id, req.user.id, req.user.id);
+
+    res.json({
+      families,
+      activeFamilyId: currentUser.family_id
+    });
+  } catch (err) {
+    console.error('Get my-families error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+/**
+ * POST /api/family/select/:familyId
+ * Select an active family dashboard without leaving any other family.
+ */
+router.post('/select/:familyId', (req, res) => {
+  try {
+    const familyId = parseInt(req.params.familyId, 10);
+    if (!familyId || isNaN(familyId)) {
+      return res.status(400).json({ error: 'Invalid family ID.' });
+    }
+
+    // Verify membership in group_members or legacy family_id
+    const membership = db.prepare(`
+      SELECT role FROM group_members WHERE group_id = ? AND user_id = ? AND membership_status = 'ACTIVE'
+    `).get(familyId, req.user.id);
+
+    const isDirectActive = req.user.family_id === familyId;
+
+    if (!membership && !isDirectActive) {
+      return res.status(403).json({ error: 'Access denied. You do not belong to this family.' });
+    }
+
+    const family = db.prepare('SELECT * FROM families WHERE id = ?').get(familyId);
+    if (!family) {
+      return res.status(404).json({ error: 'Family not found.' });
+    }
+
+    const oldFamilyId = req.user.family_id;
+
+    // Set active family
+    db.prepare('UPDATE users SET family_id = ? WHERE id = ?').run(familyId, req.user.id);
+
+    // Migrate socket room
+    const migrateSockets = req.app.get('migrateUserFamilySockets');
+    if (migrateSockets) {
+      migrateSockets(req.user.id, oldFamilyId, familyId);
+    }
+
+    res.json({
+      message: `Switched active circle to ${family.name}.`,
+      activeFamilyId: familyId,
+      family: {
+        ...family,
+        role: membership?.role?.toLowerCase() || 'member'
+      }
+    });
+  } catch (err) {
+    console.error('Select family error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
   }
 });
 
@@ -145,11 +320,14 @@ router.get('/details', (req, res) => {
 
     const owner = db.prepare('SELECT id, name, email, avatar_color FROM users WHERE id = ?').get(family.created_by);
     const members = db.prepare(`
-      SELECT id, name, email, phone, avatar_color, created_at,
-             CASE WHEN id = ? THEN 1 ELSE 0 END as is_owner
-      FROM users WHERE family_id = ?
-      ORDER BY created_at ASC
-    `).all(family.created_by, family.id);
+      SELECT DISTINCT u.id, u.name, u.email, u.phone, u.avatar_color, u.created_at,
+             CASE WHEN ? = u.id THEN 1 ELSE 0 END as is_owner,
+             COALESCE(gm.role, CASE WHEN ? = u.id THEN 'OWNER' ELSE 'MEMBER' END) as role
+      FROM users u
+      LEFT JOIN group_members gm ON gm.user_id = u.id AND gm.group_id = ? AND gm.membership_status = 'ACTIVE'
+      WHERE u.family_id = ? OR gm.group_id = ?
+      ORDER BY is_owner DESC, u.created_at ASC
+    `).all(family.created_by, family.created_by, family.id, family.id, family.id);
 
     const isOwner = family.created_by === req.user.id;
     const otherMembers = members.filter(m => m.id !== req.user.id);
@@ -273,7 +451,24 @@ router.post('/switch', (req, res) => {
       // Transfer ownership if needed
       if (isCurrentOwner && successorId) {
         db.prepare('UPDATE families SET created_by = ? WHERE id = ?').run(successorId, oldFamilyId);
+        db.prepare('UPDATE groups SET created_by = ? WHERE id = ?').run(successorId, oldFamilyId);
+        db.prepare('UPDATE group_members SET role = ? WHERE group_id = ? AND user_id = ?').run('OWNER', oldFamilyId, successorId);
       }
+
+      // Remove user from old family's group_members and settings
+      db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(oldFamilyId, currentUser.id);
+      db.prepare('DELETE FROM group_location_settings WHERE group_id = ? AND user_id = ?').run(oldFamilyId, currentUser.id);
+
+      // Add user to target family's group_members and settings
+      db.prepare(`
+        INSERT OR REPLACE INTO group_members (group_id, user_id, role, membership_status)
+        VALUES (?, ?, 'MEMBER', 'ACTIVE')
+      `).run(targetFamily.id, currentUser.id);
+
+      db.prepare(`
+        INSERT OR REPLACE INTO group_location_settings (group_id, user_id, sharing_enabled, history_enabled)
+        VALUES (?, ?, 1, 1)
+      `).run(targetFamily.id, currentUser.id);
 
       // Update user to new family
       db.prepare('UPDATE users SET family_id = ? WHERE id = ?').run(targetFamily.id, currentUser.id);
@@ -373,21 +568,46 @@ router.post('/transfer-owner', (req, res) => {
 });
 
 /**
- * POST /api/family/leave
- * Securely leave current family with ownership succession and complete socket migration.
+ * POST /api/family/leave and POST /api/family/leave/:familyId
+ * Securely leave a family circle with ownership succession and complete socket migration.
+ * Preserves other family memberships!
  */
-router.post('/leave', (req, res) => {
+router.post(['/leave', '/leave/:familyId'], (req, res) => {
   try {
     const currentUser = db.prepare('SELECT id, name, family_id FROM users WHERE id = ?').get(req.user.id);
-    if (!currentUser || !currentUser.family_id) {
-      return res.status(400).json({ error: 'You are not in any family.' });
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found.' });
     }
 
-    const prevFamilyId = currentUser.family_id;
-    const currentFamily = db.prepare('SELECT * FROM families WHERE id = ?').get(prevFamilyId);
-    const otherMembers = db.prepare('SELECT id, name FROM users WHERE family_id = ? AND id != ? ORDER BY created_at ASC').all(prevFamilyId, currentUser.id);
+    const targetFamilyId = req.params.familyId ? parseInt(req.params.familyId, 10) : currentUser.family_id;
+    if (!targetFamilyId || isNaN(targetFamilyId)) {
+      return res.status(400).json({ error: 'You are not in any family to leave.' });
+    }
 
-    const isCurrentOwner = currentFamily && currentFamily.created_by === currentUser.id;
+    const currentFamily = db.prepare('SELECT * FROM families WHERE id = ?').get(targetFamilyId);
+    if (!currentFamily) {
+      return res.status(404).json({ error: 'Family not found.' });
+    }
+
+    // Verify user is in this family
+    const membership = db.prepare(`
+      SELECT role FROM group_members WHERE group_id = ? AND user_id = ? AND membership_status = 'ACTIVE'
+    `).get(targetFamilyId, currentUser.id);
+
+    const isDirectActive = currentUser.family_id === targetFamilyId;
+    if (!membership && !isDirectActive) {
+      return res.status(400).json({ error: 'You are not a member of this family.' });
+    }
+
+    const otherMembers = db.prepare(`
+      SELECT DISTINCT u.id, u.name 
+      FROM group_members gm
+      JOIN users u ON u.id = gm.user_id
+      WHERE gm.group_id = ? AND gm.user_id != ? AND gm.membership_status = 'ACTIVE'
+      ORDER BY gm.joined_at ASC
+    `).all(targetFamilyId, currentUser.id);
+
+    const isCurrentOwner = currentFamily.created_by === currentUser.id || membership?.role === 'OWNER';
     let successorId = null;
 
     if (isCurrentOwner && otherMembers.length > 0) {
@@ -400,31 +620,66 @@ router.post('/leave', (req, res) => {
       }
     }
 
+    let nextActiveFamilyId = currentUser.family_id;
+
     db.transaction(() => {
-      if (isCurrentOwner && successorId) {
-        db.prepare('UPDATE families SET created_by = ? WHERE id = ?').run(successorId, prevFamilyId);
+      // 1. Remove from group_members and location settings for this family
+      db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(targetFamilyId, currentUser.id);
+      db.prepare('DELETE FROM group_location_settings WHERE group_id = ? AND user_id = ?').run(targetFamilyId, currentUser.id);
+
+      // 2. Clear or update user's active family_id if it pointed to targetFamilyId
+      if (currentUser.family_id === targetFamilyId) {
+        const remaining = db.prepare(`
+          SELECT group_id FROM group_members 
+          WHERE user_id = ? AND membership_status = 'ACTIVE' 
+          ORDER BY joined_at DESC LIMIT 1
+        `).get(currentUser.id);
+
+        nextActiveFamilyId = remaining ? remaining.group_id : null;
+        db.prepare('UPDATE users SET family_id = ? WHERE id = ?').run(nextActiveFamilyId, currentUser.id);
       }
-      db.prepare('UPDATE users SET family_id = NULL WHERE id = ?').run(currentUser.id);
+
+      // 3. Ownership handover or cleanup if last member
+      if (isCurrentOwner && successorId) {
+        db.prepare('UPDATE families SET created_by = ? WHERE id = ?').run(successorId, targetFamilyId);
+        db.prepare('UPDATE groups SET created_by = ? WHERE id = ?').run(successorId, targetFamilyId);
+        db.prepare('UPDATE group_members SET role = ? WHERE group_id = ? AND user_id = ?').run('OWNER', targetFamilyId, successorId);
+      } else if (isCurrentOwner && otherMembers.length === 0) {
+        // Last member leaving owner circle -> safely clean up related records and family
+        db.prepare('UPDATE users SET family_id = NULL WHERE family_id = ?').run(targetFamilyId);
+        try { db.prepare('UPDATE locations SET family_id = NULL WHERE family_id = ?').run(targetFamilyId); } catch (_) {}
+        try { db.prepare('DELETE FROM journey_checkpoints WHERE journey_id IN (SELECT id FROM journeys WHERE family_id = ?)').run(targetFamilyId); } catch (_) {}
+        try { db.prepare('DELETE FROM journeys WHERE family_id = ?').run(targetFamilyId); } catch (_) {}
+        db.prepare('DELETE FROM group_members WHERE group_id = ?').run(targetFamilyId);
+        db.prepare('DELETE FROM group_location_settings WHERE group_id = ?').run(targetFamilyId);
+        db.prepare('DELETE FROM geofences WHERE family_id = ?').run(targetFamilyId);
+        db.prepare('DELETE FROM alerts WHERE family_id = ?').run(targetFamilyId);
+        db.prepare('DELETE FROM families WHERE id = ?').run(targetFamilyId);
+        db.prepare('DELETE FROM groups WHERE id = ?').run(targetFamilyId);
+      }
     })();
 
     // Socket migration
     const migrateSockets = req.app.get('migrateUserFamilySockets');
     if (migrateSockets) {
-      migrateSockets(currentUser.id, prevFamilyId, null);
+      migrateSockets(currentUser.id, targetFamilyId, nextActiveFamilyId);
     }
 
     const io = req.app.get('io');
     if (io) {
-      io.to(`family:${prevFamilyId}`).emit('member:left', {
+      io.to(`family:${targetFamilyId}`).emit('member:left', {
         userId: currentUser.id,
         user_id: currentUser.id,
         userName: currentUser.name,
-        user_name: currentUser.name
+        user_name: currentUser.name,
+        familyId: targetFamilyId
       });
     }
 
     res.json({
       message: 'Left family successfully.',
+      leftFamilyId: targetFamilyId,
+      activeFamilyId: nextActiveFamilyId,
       ownerTransferredTo: successorId
     });
   } catch (err) {
@@ -472,24 +727,46 @@ router.delete('/delete', (req, res) => {
 
 /**
  * GET /api/family/members
- * Get all family members with their latest location.
+ * Get all members of the active family (or specified familyId query) with their latest location.
+ * Strictly respects per-family location sharing privacy!
  */
 router.get('/members', (req, res) => {
   try {
-    if (!req.user.family_id) {
+    const targetFamilyId = req.query.familyId ? parseInt(req.query.familyId, 10) : req.user.family_id;
+    if (!targetFamilyId) {
       return res.status(400).json({ error: 'You are not a member of any family.' });
     }
 
+    // Verify user authorization for this family
+    const isMember = db.prepare(`
+      SELECT id FROM group_members WHERE group_id = ? AND user_id = ? AND membership_status = 'ACTIVE'
+    `).get(targetFamilyId, req.user.id);
+
+    if (!isMember && req.user.family_id !== targetFamilyId) {
+      return res.status(403).json({ error: 'Access denied. You do not belong to this family.' });
+    }
+
     const members = db.prepare(`
-      SELECT id, name, email, phone, avatar_color, family_id, created_at
-      FROM users WHERE family_id = ?
-    `).all(req.user.family_id);
+      SELECT DISTINCT u.id, u.name, u.email, u.phone, u.avatar_color, ? as family_id, u.created_at,
+             COALESCE(gm.role, 'MEMBER') as role
+      FROM users u
+      LEFT JOIN group_members gm ON gm.user_id = u.id AND gm.group_id = ? AND gm.membership_status = 'ACTIVE'
+      WHERE u.family_id = ? OR gm.group_id = ?
+      ORDER BY gm.joined_at ASC
+    `).all(targetFamilyId, targetFamilyId, targetFamilyId, targetFamilyId);
 
     // Get latest locations for all members
-    const latestLocations = locationService.getLatestLocations(req.user.family_id);
+    const latestLocations = locationService.getLatestLocations(targetFamilyId);
 
     const membersWithLocations = members.map(member => {
-      const location = latestLocations.find(loc => loc.user_id === member.id);
+      // Check if member has sharing enabled for this group/family
+      const locSetting = db.prepare(`
+        SELECT sharing_enabled FROM group_location_settings WHERE group_id = ? AND user_id = ?
+      `).get(targetFamilyId, member.id);
+
+      const isSharingAllowed = !locSetting || locSetting.sharing_enabled === 1;
+      const location = isSharingAllowed ? latestLocations.find(loc => loc.user_id === member.id) : null;
+
       return {
         ...member,
         latest_location: location ? {
@@ -535,6 +812,71 @@ router.get('/invite-code', (req, res) => {
     });
   } catch (err) {
     console.error('Get invite code error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+/**
+ * GET /api/family/:familyId
+ * Return specific family details only if user is authorized to access it.
+ * Note: uses (\\d+) regex constraint to prevent shadowing any named static routes!
+ */
+router.get('/:familyId(\\d+)', (req, res) => {
+  try {
+    const familyId = parseInt(req.params.familyId, 10);
+    if (!familyId || isNaN(familyId)) {
+      return res.status(400).json({ error: 'Invalid family ID.' });
+    }
+
+    // Verify user authorization: must be member in group_members or active family_id
+    const membership = db.prepare(`
+      SELECT role FROM group_members WHERE group_id = ? AND user_id = ? AND membership_status = 'ACTIVE'
+    `).get(familyId, req.user.id);
+
+    const isDirectActive = req.user.family_id === familyId;
+
+    if (!membership && !isDirectActive) {
+      return res.status(403).json({ error: 'Access denied. You do not belong to this family.' });
+    }
+
+    const family = db.prepare('SELECT * FROM families WHERE id = ?').get(familyId);
+    if (!family) {
+      return res.status(404).json({ error: 'Family not found.' });
+    }
+
+    const owner = db.prepare('SELECT id, name, email, avatar_color FROM users WHERE id = ?').get(family.created_by);
+    const members = db.prepare(`
+      SELECT DISTINCT u.id, u.name, u.email, u.phone, u.avatar_color, u.created_at,
+             CASE WHEN ? = u.id THEN 1 ELSE 0 END as is_owner,
+             COALESCE(gm.role, CASE WHEN ? = u.id THEN 'OWNER' ELSE 'MEMBER' END) as role
+      FROM users u
+      LEFT JOIN group_members gm ON gm.user_id = u.id AND gm.group_id = ? AND gm.membership_status = 'ACTIVE'
+      WHERE u.family_id = ? OR gm.group_id = ?
+      ORDER BY is_owner DESC, u.created_at ASC
+    `).all(family.created_by, family.created_by, family.id, family.id, family.id);
+
+    const isOwner = family.created_by === req.user.id || (membership && membership.role === 'OWNER');
+    const otherMembers = members.filter(m => m.id !== req.user.id);
+
+    res.json({
+      family: {
+        id: family.id,
+        name: family.name,
+        invite_code: family.invite_code,
+        inviteCode: family.invite_code,
+        created_by: family.created_by,
+        created_at: family.created_at,
+        is_owner: isOwner,
+        owner_name: owner ? owner.name : 'Unknown'
+      },
+      userRole: isOwner ? 'owner' : (membership?.role?.toLowerCase() || 'member'),
+      members,
+      otherMembers,
+      is_active: req.user.family_id === family.id,
+      canLeaveDirectly: !isOwner || otherMembers.length === 0
+    });
+  } catch (err) {
+    console.error('Get family by ID error:', err);
     res.status(500).json({ error: 'Internal server error.' });
   }
 });

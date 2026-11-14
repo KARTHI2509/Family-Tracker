@@ -6,9 +6,9 @@ import { Menu, LogOut, Navigation, NavigationOff, AlertTriangle, ShieldCheck, Ba
 import JourneyModal from '../Dashboard/JourneyModal';
 import LocationSettingsModal from '../Settings/LocationSettingsModal';
 
-export default function Header({ onToggleSidebar, familyName, onOpenFamilyManagement, onCheckUpdate }) {
+export default function Header({ onToggleSidebar, familyName, onOpenFamilyManagement, onCheckUpdate, onOpenMyFamilies }) {
   const { user, logout } = useAuth();
-  const { isTrackingEnabled, toggleTracking, trackingStatus, trackingMode, setTrackingMode } = useFamily();
+  const { isTrackingEnabled, toggleTracking, trackingStatus, trackingMode, setTrackingMode, myFamilies = [] } = useFamily();
   const [isJourneyModalOpen, setIsJourneyModalOpen] = useState(false);
   const [isLocationSettingsOpen, setIsLocationSettingsOpen] = useState(false);
   const [showModeDropdown, setShowModeDropdown] = useState(false);
@@ -110,8 +110,8 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
             <button
               type="button"
               className="family-name-badge clickable"
-              onClick={onOpenFamilyManagement}
-              title="Manage Family Circle, Switch or Leave"
+              onClick={onOpenMyFamilies || onOpenFamilyManagement}
+              title="View All My Families, Switch or Create Circles"
               style={{
                 cursor: 'pointer',
                 display: 'inline-flex',
@@ -129,16 +129,21 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
             >
               <Users size={13} color="#818CF8" />
               <span>{familyName}</span>
+              {myFamilies.length > 1 && (
+                <span style={{ fontSize: '10px', background: 'var(--primary-600)', color: '#fff', borderRadius: '10px', padding: '1px 5px', marginLeft: '2px' }}>
+                  {myFamilies.length}
+                </span>
+              )}
             </button>
           )}
         </div>
 
         <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* Family Circle Management Button */}
+          {/* My Families Multi-Circle Button */}
           <button
             type="button"
             className="btn btn-ghost hide-mobile"
-            onClick={onOpenFamilyManagement}
+            onClick={onOpenMyFamilies || onOpenFamilyManagement}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -146,14 +151,14 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
               fontSize: '12px',
               padding: '4px 10px',
               borderRadius: '9999px',
-              background: 'rgba(99, 102, 241, 0.12)',
-              color: '#A5B4FC',
-              border: '1px solid rgba(99, 102, 241, 0.3)'
+              background: 'rgba(99, 102, 241, 0.15)',
+              color: '#C7D2FE',
+              border: '1px solid rgba(99, 102, 241, 0.4)'
             }}
-            title="Manage Family Circle, Switch or Leave"
+            title="Switch, Create, or Join Multiple Families"
           >
-            <Users size={13} />
-            <span className="header-pill-text">Family Circle</span>
+            <Users size={13} color="#818CF8" />
+            <span className="header-pill-text">My Families {myFamilies.length > 1 ? `(${myFamilies.length})` : ''}</span>
           </button>
 
           {/* Journey Safety & Check-In Button */}

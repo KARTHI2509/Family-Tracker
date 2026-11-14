@@ -563,6 +563,60 @@ async function runTests() {
     const upToDateCheck = await request('GET', '/api/app/check-update?platform=android&versionCode=2&versionName=1.1.0');
     recordTest('V3: In-App Update: Recognizes Client Already Up-to-Date', upToDateCheck.status === 200 && upToDateCheck.data?.updateAvailable === false);
 
+    // Multi-Family Architecture Tests
+    console.log('\n--- Testing Multi-Family Architecture ---');
+    const regFrank = await request('POST', '/api/auth/register', {
+      name: 'Frank Castle',
+      email: 'frank@example.com',
+      password: 'password123'
+    });
+    const tokenFrank = regFrank.data?.token;
+
+    // Frank creates Family 1 (Home Circle)
+    const frankFam1 = await request('POST', '/api/family/create', { name: 'Frank Home Circle', groupType: 'FAMILY' }, tokenFrank);
+    const fam1Id = frankFam1.data?.family?.id;
+    recordTest('Multi-Family: Frank creates first family circle', frankFam1.status === 201 && !!fam1Id);
+
+    // Frank creates Family 2 (Friends Circle) with the same account
+    const frankFam2 = await request('POST', '/api/family/create', { name: 'Frank Friends Circle', groupType: 'FRIENDS' }, tokenFrank);
+    const fam2Id = frankFam2.data?.family?.id;
+    const fam2Invite = frankFam2.data?.invite_code;
+    recordTest('Multi-Family: Same user creates second family without leaving first', frankFam2.status === 201 && !!fam2Id && fam2Id !== fam1Id);
+
+    // Frank retrieves all his families via GET /api/family/my-families
+    const frankAllFams = await request('GET', '/api/family/my-families', null, tokenFrank);
+    const frankFamList = frankAllFams.data?.families || [];
+    recordTest('Multi-Family: GET /api/family/my-families returns both active memberships', frankAllFams.status === 200 && frankFamList.length === 2 && frankFamList.some(f => f.id === fam1Id) && frankFamList.some(f => f.id === fam2Id));
+
+    // Frank switches active dashboard view to Family 1
+    const selectFam1 = await request('POST', `/api/family/select/${fam1Id}`, null, tokenFrank);
+    const frankProfileAfterSelect = await request('GET', '/api/auth/me', null, tokenFrank);
+    recordTest('Multi-Family: POST /api/family/select switches active family context', selectFam1.status === 200 && frankProfileAfterSelect.data?.user?.family_id === fam1Id);
+
+    // Grace registers and creates her own Circle
+    const regGrace = await request('POST', '/api/auth/register', {
+      name: 'Grace Hopper',
+      email: 'grace@example.com',
+      password: 'password123'
+    });
+    const tokenGrace = regGrace.data?.token;
+    const graceFam = await request('POST', '/api/family/create', { name: 'Grace Tech Circle' }, tokenGrace);
+    const graceFamId = graceFam.data?.family?.id;
+
+    // Grace joins Frank's Friends Circle via invite code while staying in her Tech Circle
+    const graceJoin = await request('POST', '/api/family/join', { inviteCode: fam2Invite }, tokenGrace);
+    recordTest('Multi-Family: User joins second circle via invite code without leaving first', graceJoin.status === 200);
+
+    const graceAllFams = await request('GET', '/api/family/my-families', null, tokenGrace);
+    const graceFamList = graceAllFams.data?.families || [];
+    recordTest('Multi-Family: Grace belongs simultaneously to both circles', graceFamList.length === 2 && graceFamList.some(f => f.id === graceFamId) && graceFamList.some(f => f.id === fam2Id));
+
+    // Grace leaves Frank's Friends Circle via /api/family/leave/:familyId
+    const graceLeave = await request('POST', `/api/family/leave/${fam2Id}`, {}, tokenGrace);
+    const graceFamsAfterLeave = await request('GET', '/api/family/my-families', null, tokenGrace);
+    const graceProfileAfterLeave = await request('GET', '/api/auth/me', null, tokenGrace);
+    recordTest('Multi-Family: User leaves one circle and seamlessly falls back to remaining circle', graceLeave.status === 200 && (graceFamsAfterLeave.data?.families || []).length === 1 && graceProfileAfterLeave.data?.user?.family_id === graceFamId);
+
   } catch (err) {
     console.error('Fatal test error:', err);
     recordTest('Test Runner Execution', false, err.message);

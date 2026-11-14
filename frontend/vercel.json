@@ -3,18 +3,33 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "rewrites": [
+  "headers": [
     {
       "source": "/FamilyTracker.apk",
-      "destination": "https://family-tracker-fidw.onrender.com/FamilyTracker.apk"
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/vnd.android.package-archive"
+        },
+        {
+          "key": "Content-Disposition",
+          "value": "attachment; filename=\"FamilyTracker.apk\""
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://family-tracker-fidw.onrender.com/api/$1"
     },
     {
       "source": "/download/(.*)",
       "destination": "https://family-tracker-fidw.onrender.com/download/$1"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "https://family-tracker-fidw.onrender.com/api/$1"
     },
     {
       "source": "/(.*)",

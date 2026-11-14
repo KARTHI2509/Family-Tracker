@@ -26,6 +26,10 @@ export function FamilyProvider({ children }) {
   const [isConnected, setIsConnected] = useState(false);
   const [toasts, setToasts] = useState([]);
 
+  // Multi-Family Architecture State
+  const [myFamilies, setMyFamilies] = useState([]);
+  const [loadingMyFamilies, setLoadingMyFamilies] = useState(false);
+
   // Multi-Group Architecture State (V3)
   const [groups, setGroups] = useState([]);
   const [activeGroupId, setActiveGroupId] = useState(() => {
@@ -427,6 +431,104 @@ export function FamilyProvider({ children }) {
 
     await refreshUser();
     addToast('info', 'Family Deleted', 'The family circle was deleted.');
+    return data;
+  };
+
+  // Multi-Family Operations
+  const fetchMyFamilies = useCallback(async () => {
+    setLoadingMyFamilies(true);
+    try {
+      const data = await api.get('/family/my-families');
+      const list = data.families || [];
+      setMyFamilies(list);
+      return list;
+    } catch (err) {
+      console.warn('Failed to fetch my families:', err);
+      return [];
+    } finally {
+      setLoadingMyFamilies(false);
+    }
+  }, []);
+
+  const createAnotherFamily = async ({ name, groupType, description }) => {
+    const data = await api.post('/family/create', { name, groupType, description });
+    await refreshUser();
+    await fetchMyFamilies();
+    await fetchGroups();
+    await Promise.all([
+      fetchMembers(),
+      fetchAlerts(),
+      fetchGeofences(),
+      fetchActiveSOS(),
+      fetchActiveJourneys(),
+      fetchFamilyDetails()
+    ]);
+    addToast('success', 'Family Created!', `"${name}" has been created.`);
+    return data;
+  };
+
+  const joinAnotherFamily = async (inviteCode) => {
+    const data = await api.post('/family/join', { inviteCode });
+    await refreshUser();
+    await fetchMyFamilies();
+    await fetchGroups();
+    await Promise.all([
+      fetchMembers(),
+      fetchAlerts(),
+      fetchGeofences(),
+      fetchActiveSOS(),
+      fetchActiveJourneys(),
+      fetchFamilyDetails()
+    ]);
+    addToast('success', 'Joined Circle!', `You are now a member of "${data.family?.name || 'new circle'}".`);
+    return data;
+  };
+
+  const selectActiveFamily = async (familyId) => {
+    const data = await api.post(`/family/select/${familyId}`);
+    setMembers([]);
+    setAlerts([]);
+    setGeofences([]);
+    setActiveSOSEvents(new Set());
+    setActiveJourneys([]);
+
+    await refreshUser();
+    await fetchMyFamilies();
+    await Promise.all([
+      fetchMembers(),
+      fetchAlerts(),
+      fetchGeofences(),
+      fetchActiveSOS(),
+      fetchActiveJourneys(),
+      fetchFamilyDetails()
+    ]);
+    addToast('info', 'Active Circle Changed', `Switched view to "${data.family?.name || 'Circle'}".`);
+    return data;
+  };
+
+  const leaveFamilyCircle = async (familyId, transferOwnerTo = null) => {
+    const data = await api.post(`/family/leave/${familyId}`, { transferOwnerTo });
+    await refreshUser();
+    const remaining = await fetchMyFamilies();
+    await fetchGroups();
+    if (remaining.length > 0) {
+      await Promise.all([
+        fetchMembers(),
+        fetchAlerts(),
+        fetchGeofences(),
+        fetchActiveSOS(),
+        fetchActiveJourneys(),
+        fetchFamilyDetails()
+      ]);
+    } else {
+      setMembers([]);
+      setAlerts([]);
+      setGeofences([]);
+      setActiveSOSEvents(new Set());
+      setActiveJourneys([]);
+      setFamilyDetails(null);
+    }
+    addToast('info', 'Left Family', 'You have left the circle.');
     return data;
   };
 
@@ -836,6 +938,7 @@ export function FamilyProvider({ children }) {
       fetchAlerts();
       fetchActiveSOS();
       fetchActiveJourneys();
+      fetchMyFamilies();
 
       if (user.family_id) {
         fetchMembers();
@@ -843,7 +946,7 @@ export function FamilyProvider({ children }) {
         fetchFamilyDetails();
       }
     }
-  }, [user, token, fetchGroups, fetchMembers, fetchAlerts, fetchGeofences, fetchActiveSOS, fetchActiveJourneys, fetchFamilyDetails]);
+  }, [user, token, fetchGroups, fetchMyFamilies, fetchMembers, fetchAlerts, fetchGeofences, fetchActiveSOS, fetchActiveJourneys, fetchFamilyDetails]);
 
   const value = {
     // Legacy Family values
@@ -892,6 +995,15 @@ export function FamilyProvider({ children }) {
     markAllAlertsRead,
     fetchLocationHistory,
     lastLocation: lastLocationRef.current,
+
+    // Multi-Family Architecture
+    myFamilies,
+    loadingMyFamilies,
+    fetchMyFamilies,
+    createAnotherFamily,
+    joinAnotherFamily,
+    selectActiveFamily,
+    leaveFamilyCircle,
 
     // Multi-Group Architecture V3
     groups,

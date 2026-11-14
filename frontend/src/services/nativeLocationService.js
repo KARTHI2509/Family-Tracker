@@ -4,6 +4,8 @@ import { Network } from '@capacitor/network';
 import { Preferences } from '@capacitor/preferences';
 import { App } from '@capacitor/app';
 
+import { APP_VERSION, APP_VERSION_CODE } from '../version';
+
 // Native Android Plugin bridge
 const FamilyLocation = registerPlugin('FamilyLocation');
 
@@ -579,8 +581,8 @@ class NativeLocationService {
       }
     }
     return {
-      versionCode: 1,
-      versionName: '1.0.0',
+      versionCode: APP_VERSION_CODE,
+      versionName: APP_VERSION,
       packageName: 'com.familytracker.app'
     };
   }
