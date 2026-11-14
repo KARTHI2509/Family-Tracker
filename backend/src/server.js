@@ -23,6 +23,7 @@ const sosRoutes = require('./routes/sos');
 const alertRoutes = require('./routes/alerts');
 const adminRoutes = require('./routes/admin');
 const journeyRoutes = require('./routes/journey');
+const appUpdateRoutes = require('./routes/appUpdate');
 const locationService = require('./services/locationService');
 
 const app = express();
@@ -277,6 +278,7 @@ app.use('/api/sos', sosRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/journey', journeyRoutes);
+app.use('/api/app', appUpdateRoutes);
 
 // Health check endpoint (production safe - no credentials exposed)
 app.get('/api/health', (req, res) => {

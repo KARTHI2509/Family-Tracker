@@ -57,3 +57,4 @@ export default function LocationConsentModal({ family, onClose }) {
     </div>
   );
 }
+

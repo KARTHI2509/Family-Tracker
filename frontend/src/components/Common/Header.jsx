@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useFamily } from '../../context/FamilyContext';
-import { Menu, LogOut, Navigation, NavigationOff, AlertTriangle, ShieldCheck, BatteryCharging, Send, Settings, Users } from 'lucide-react';
+import { Menu, LogOut, Navigation, NavigationOff, AlertTriangle, ShieldCheck, BatteryCharging, Send, Settings, Users, Sparkles } from 'lucide-react';
 import JourneyModal from '../Dashboard/JourneyModal';
 import LocationSettingsModal from '../Settings/LocationSettingsModal';
 
-export default function Header({ onToggleSidebar, familyName, onOpenFamilyManagement }) {
+export default function Header({ onToggleSidebar, familyName, onOpenFamilyManagement, onCheckUpdate }) {
   const { user, logout } = useAuth();
   const { isTrackingEnabled, toggleTracking, trackingStatus, trackingMode, setTrackingMode } = useFamily();
   const [isJourneyModalOpen, setIsJourneyModalOpen] = useState(false);
@@ -295,6 +295,19 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
               <ShieldCheck size={14} />
               <span className="header-pill-text">Admin</span>
             </Link>
+          )}
+
+          {/* Check for Updates Button */}
+          {onCheckUpdate && (
+            <button
+              className="btn btn-ghost"
+              onClick={onCheckUpdate}
+              title="Check for App Updates"
+              style={{ padding: '6px', color: '#34D399' }}
+              aria-label="Check for Updates"
+            >
+              <Sparkles size={18} />
+            </button>
           )}
 
           {/* Location Permissions & Settings Button */}

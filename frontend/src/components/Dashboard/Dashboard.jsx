@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Header from '../Common/Header';
 import Toast from '../Common/Toast';
 import LiveMap from '../Map/LiveMap';
@@ -13,6 +13,8 @@ import FamilyManagementModal from '../Family/FamilyManagementModal';
 import SwitchFamilyModal from '../Family/SwitchFamilyModal';
 import LeaveFamilyModal from '../Family/LeaveFamilyModal';
 import LocationConsentModal from '../Family/LocationConsentModal';
+import AppUpdateModal from '../Common/AppUpdateModal';
+import { appUpdateService } from '../../services/appUpdateService';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
 import { Users, Bell, History, MapPin, ShieldAlert, Radio, X } from 'lucide-react';
@@ -32,6 +34,39 @@ export default function Dashboard() {
   const [isFamilyManagementOpen, setIsFamilyManagementOpen] = useState(false);
   const [isSwitchFamilyOpen, setIsSwitchFamilyOpen] = useState(false);
   const [isLeaveFamilyOpen, setIsLeaveFamilyOpen] = useState(false);
+
+  // App Update Modal
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+
+  useEffect(() => {
+    // Automatically check for app updates shortly after startup
+    const timer = setTimeout(async () => {
+      try {
+        const info = await appUpdateService.checkForUpdate();
+        if (info && info.updateAvailable) {
+          setUpdateInfo(info);
+          setIsUpdateModalOpen(true);
+        }
+      } catch (err) {
+        console.warn('Initial update check error:', err);
+      }
+    }, 2500);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleManualCheckUpdate = async () => {
+    try {
+      const info = await appUpdateService.checkForUpdate(true);
+      if (info) {
+        setUpdateInfo(info);
+        setIsUpdateModalOpen(true);
+      }
+    } catch (err) {
+      console.warn('Manual update check error:', err);
+    }
+  };
 
   // Safe zone / geofence picking state
   const [isGeofenceDrawerOpen, setIsGeofenceDrawerOpen] = useState(false);
@@ -89,6 +124,7 @@ export default function Dashboard() {
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         familyName={user?.family_name || 'My Family Circle'}
         onOpenFamilyManagement={() => setIsFamilyManagementOpen(true)}
+        onCheckUpdate={handleManualCheckUpdate}
       />
 
       {/* Emergency Alert Banner if any SOS is active */}
@@ -318,6 +354,13 @@ export default function Dashboard() {
         isOpen={!!pendingConsentFamily}
         newFamily={pendingConsentFamily}
         onClose={() => setPendingConsentFamily(null)}
+      />
+
+      {/* In-App Update Modal */}
+      <AppUpdateModal
+        isOpen={isUpdateModalOpen}
+        onClose={() => setIsUpdateModalOpen(false)}
+        updateData={updateInfo}
       />
 
       <Toast />

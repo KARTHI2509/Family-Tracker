@@ -551,6 +551,18 @@ async function runTests() {
     const daveMe = await request('GET', '/api/auth/me', null, tokenDave);
     recordTest('V3: User family_id cleared after leaving family', daveMe.data?.user?.family_id === null || daveMe.data?.user?.family_id === undefined);
 
+    // V3 Test 11: GET /api/app/version
+    const appVersionRes = await request('GET', '/api/app/version');
+    recordTest('V3: In-App Update: GET /api/app/version', appVersionRes.status === 200 && !!appVersionRes.data?.latestVersion);
+
+    // V3 Test 12: GET /api/app/check-update with older version
+    const updateCheckRes = await request('GET', '/api/app/check-update?platform=android&versionCode=1&versionName=1.0.0');
+    recordTest('V3: In-App Update: Detects Outdated Client & Offers Update', updateCheckRes.status === 200 && updateCheckRes.data?.updateAvailable === true);
+
+    // V3 Test 13: GET /api/app/check-update with latest version
+    const upToDateCheck = await request('GET', '/api/app/check-update?platform=android&versionCode=2&versionName=1.1.0');
+    recordTest('V3: In-App Update: Recognizes Client Already Up-to-Date', upToDateCheck.status === 200 && upToDateCheck.data?.updateAvailable === false);
+
   } catch (err) {
     console.error('Fatal test error:', err);
     recordTest('Test Runner Execution', false, err.message);

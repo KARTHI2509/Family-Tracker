@@ -566,6 +566,36 @@ class NativeLocationService {
       return null;
     }
   }
+
+  /**
+   * Get native application version info
+   */
+  async getAppVersionInfo() {
+    if (this.isNative && this.platform === 'android') {
+      try {
+        return await FamilyLocation.getAppVersionInfo();
+      } catch (err) {
+        console.warn('Failed to get native version info:', err);
+      }
+    }
+    return {
+      versionCode: 1,
+      versionName: '1.0.0',
+      packageName: 'com.familytracker.app'
+    };
+  }
+
+  /**
+   * Download and launch APK installer on Android
+   */
+  async downloadAndInstallApk(url) {
+    if (this.isNative && this.platform === 'android') {
+      return await FamilyLocation.downloadAndInstallApk({ url });
+    }
+    // Web/PWA fallback: trigger direct browser download
+    window.location.href = url || '/FamilyTracker.apk';
+    return { status: 'downloading' };
+  }
 }
 
 export const nativeLocationService = new NativeLocationService();

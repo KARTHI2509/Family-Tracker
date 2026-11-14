@@ -2,14 +2,20 @@ package com.familytracker.app;
 
 import android.Manifest;
 import android.app.ActivityManager;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.provider.Settings;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -17,6 +23,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.io.File;
 
 @CapacitorPlugin(
     name = "FamilyLocation",
@@ -182,6 +189,121 @@ public class FamilyLocationPlugin extends Plugin {
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Failed to stop foreground service: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void getAppVersionInfo(PluginCall call) {
+        try {
+            Context context = getContext();
+            PackageInfo pInfo = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+            long versionCode = 1;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                versionCode = pInfo.getLongVersionCode();
+            } else {
+                versionCode = pInfo.versionCode;
+            }
+
+            JSObject ret = new JSObject();
+            ret.put("versionCode", versionCode);
+            ret.put("versionName", pInfo.versionName);
+            ret.put("packageName", context.getPackageName());
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to get package info: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void downloadAndInstallApk(PluginCall call) {
+        String apkUrl = call.getString("url");
+        if (apkUrl == null || apkUrl.isEmpty()) {
+            call.reject("APK URL is required.");
+            return;
+        }
+
+        try {
+            Context context = getContext();
+
+            // Check if unknown app install permission is needed on Android 8+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (!context.getPackageManager().canRequestPackageInstalls()) {
+                    Intent settingsIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                    settingsIntent.setData(Uri.parse("package:" + context.getPackageName()));
+                    settingsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(settingsIntent);
+                    JSObject ret = new JSObject();
+                    ret.put("status", "permission_required");
+                    ret.put("message", "Please allow install unknown apps and try again.");
+                    call.resolve(ret);
+                    return;
+                }
+            }
+
+            DownloadManager downloadManager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+            if (downloadManager == null) {
+                call.reject("DownloadManager not available on this device.");
+                return;
+            }
+
+            Uri downloadUri = Uri.parse(apkUrl);
+            DownloadManager.Request request = new DownloadManager.Request(downloadUri);
+            request.setTitle("FamilyTracker Update");
+            request.setDescription("Downloading latest FamilyTracker update...");
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+
+            File updateFile = new File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "FamilyTracker-update.apk");
+            if (updateFile.exists()) {
+                updateFile.delete();
+            }
+
+            request.setDestinationUri(Uri.fromFile(updateFile));
+            request.setMimeType("application/vnd.android.package-archive");
+
+            long downloadId = downloadManager.enqueue(request);
+
+            BroadcastReceiver onComplete = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context c, Intent intent) {
+                    long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+                    if (id == downloadId) {
+                        try {
+                            if (updateFile.exists()) {
+                                Uri contentUri = FileProvider.getUriForFile(
+                                    context,
+                                    context.getPackageName() + ".fileprovider",
+                                    updateFile
+                                );
+
+                                Intent installIntent = new Intent(Intent.ACTION_VIEW);
+                                installIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
+                                installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                context.startActivity(installIntent);
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                        try {
+                            context.unregisterReceiver(this);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            };
+
+            ContextCompat.registerReceiver(
+                context,
+                onComplete,
+                new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+                ContextCompat.RECEIVER_EXPORTED
+            );
+
+            JSObject ret = new JSObject();
+            ret.put("status", "downloading");
+            ret.put("downloadId", downloadId);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to trigger update download: " + e.getMessage());
         }
     }
 }
