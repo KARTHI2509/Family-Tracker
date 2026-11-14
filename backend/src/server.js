@@ -28,6 +28,9 @@ const locationService = require('./services/locationService');
 const app = express();
 const server = http.createServer(app);
 
+// Trust reverse proxy (Render, Vercel, Railway) for accurate IP resolution and rate-limiting
+app.set('trust proxy', 1);
+
 // Security headers
 app.use(helmet({
   contentSecurityPolicy: false, // Disabled to allow external map tiles (OSM/Google) and fonts
@@ -73,6 +76,7 @@ const authLimiter = rateLimit({
   max: 30, // 30 requests per windowMs for auth
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { error: 'Too many requests from this IP, please try again after 15 minutes.' }
 });
 
@@ -81,6 +85,7 @@ const apiLimiter = rateLimit({
   max: 600, // 600 requests per windowMs for general API
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { error: 'Too many requests, please slow down.' }
 });
 
