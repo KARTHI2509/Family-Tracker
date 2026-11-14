@@ -477,7 +477,7 @@ export default function LiveMap({
             style={{ width: 'auto', padding: '0 12px', gap: '6px', fontSize: '12px', fontWeight: 600 }}
           >
             <Layers size={16} />
-            <span>{activeLayer.name}</span>
+            <span className="map-layer-btn-label">{activeLayer.name}</span>
           </button>
 
           {showLayerMenu && (
@@ -559,27 +559,16 @@ export default function LiveMap({
 
       {/* Map Legend Overlay */}
       {showLegend && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: '24px',
-            right: '12px',
-            zIndex: 850,
-            background: 'rgba(15, 23, 42, 0.92)',
-            backdropFilter: 'blur(12px)',
-            border: '1px solid rgba(255, 255, 255, 0.12)',
-            borderRadius: '12px',
-            padding: '12px 16px',
-            color: '#F8FAFC',
-            fontSize: '12px',
-            boxShadow: 'var(--shadow-xl)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '8px'
-          }}
-        >
-          <div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '2px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '4px' }}>
-            Map Legend
+        <div className="map-legend-overlay">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '4px' }}>
+            <span style={{ fontWeight: 700, fontSize: '13px' }}>Map Legend</span>
+            <button
+              onClick={() => setShowLegend(false)}
+              style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', padding: '2px', display: 'flex' }}
+              aria-label="Close legend"
+            >
+              <X size={14} />
+            </button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#10B981' }}></span>

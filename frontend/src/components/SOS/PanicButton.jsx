@@ -121,6 +121,7 @@ export default function PanicButton() {
             onMouseLeave={endHold}
             onTouchStart={startHold}
             onTouchEnd={endHold}
+            onTouchCancel={endHold}
             disabled={submitting}
             title="Press and hold 1 second for emergency SOS"
             aria-label="Emergency Panic Button"

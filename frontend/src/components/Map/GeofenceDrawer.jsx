@@ -58,21 +58,24 @@ export default function GeofenceDrawer({
   };
 
   return (
-    <div className={`geofence-drawer ${isOpen ? 'open' : ''}`}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-        <h3>
-          <MapPin size={18} className="text-primary" />
-          Safe Zones & Geofencing
-        </h3>
-        <button
-          className="btn btn-ghost"
-          onClick={onClose}
-          style={{ padding: '6px', color: 'var(--text-400)' }}
-          aria-label="Close Geofence Drawer"
-        >
-          <X size={18} />
-        </button>
-      </div>
+    <>
+      {isOpen && <div className="geofence-backdrop visible" onClick={onClose} />}
+      <div className={`geofence-drawer ${isOpen ? 'open' : ''}`}>
+        <div className="drawer-pull-bar" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <h3>
+            <MapPin size={18} className="text-primary" />
+            <span>Safe Zones & Geofencing</span>
+          </h3>
+          <button
+            className="btn btn-ghost"
+            onClick={onClose}
+            style={{ padding: '6px', color: 'var(--text-400)' }}
+            aria-label="Close Geofence Drawer"
+          >
+            <X size={18} />
+          </button>
+        </div>
 
       {error && (
         <div style={{ color: 'var(--danger-400)', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
@@ -207,5 +210,6 @@ export default function GeofenceDrawer({
         </div>
       )}
     </div>
+    </>
   );
 }

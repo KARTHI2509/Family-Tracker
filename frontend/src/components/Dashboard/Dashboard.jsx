@@ -8,9 +8,10 @@ import FamilyPanel from './FamilyPanel';
 import AlertsPanel from './AlertsPanel';
 import LocationHistory from './LocationHistory';
 import PanicButton from '../SOS/PanicButton';
+import MobileBottomNav from '../Navigation/MobileBottomNav';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
-import { Users, Bell, History, MapPin, ShieldAlert, Radio } from 'lucide-react';
+import { Users, Bell, History, MapPin, ShieldAlert, Radio, X } from 'lucide-react';
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -43,6 +44,10 @@ export default function Dashboard() {
     if (lat != null && lng != null && !isNaN(lat) && !isNaN(lng)) {
       setFocusedCoord([lat, lng]);
     }
+    // Auto-close sidebar on mobile so member is visible on map
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setSidebarOpen(false);
+    }
   };
 
   const handleMapClick = (latlng) => {
@@ -67,7 +72,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="app-layout" style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw' }}>
+    <div className="app-layout">
       <Header
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         familyName={user?.family_name || 'My Family Circle'}
@@ -96,7 +101,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div style={{ display: 'flex', flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
         {/* Mobile Backdrop */}
         <div
           className={`sidebar-backdrop ${sidebarOpen ? 'visible' : ''}`}
@@ -105,6 +110,19 @@ export default function Dashboard() {
 
         {/* Sidebar */}
         <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+          {/* Mobile Close Bar */}
+          <div className="sidebar-mobile-close-bar">
+            <span style={{ fontWeight: 700, fontSize: '14px', color: '#FFFFFF' }}>FamilyTracker Menu</span>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setSidebarOpen(false)}
+              aria-label="Close menu"
+              style={{ padding: '6px', color: 'var(--text-300)' }}
+            >
+              <X size={20} />
+            </button>
+          </div>
+
           {/* Quick Metrics Header */}
           <div
             style={{
@@ -181,11 +199,12 @@ export default function Dashboard() {
 
         {/* Main Map View */}
         <main className="main-content">
-          <div className="map-overlay-controls">
+          <div className="map-overlay-controls" style={{ position: 'absolute', top: '12px', left: '52px', zIndex: 800 }}>
             <button
               className={`map-control-btn ${isGeofenceDrawerOpen ? 'active' : ''}`}
               onClick={() => setIsGeofenceDrawerOpen(!isGeofenceDrawerOpen)}
               title="Manage Safe Zones & Geofences"
+              style={{ width: '38px', height: '38px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
               <MapPin size={18} />
             </button>
@@ -230,6 +249,27 @@ export default function Dashboard() {
           <PanicButton />
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        sidebarOpen={sidebarOpen}
+        onSelectTab={(tab) => {
+          setActiveTab(tab);
+          setSidebarOpen(true);
+          setIsGeofenceDrawerOpen(false);
+        }}
+        onToggleMap={() => {
+          setSidebarOpen(false);
+          setIsGeofenceDrawerOpen(false);
+        }}
+        unreadAlertsCount={unreadAlertsCount}
+        onToggleGeofences={() => {
+          setIsGeofenceDrawerOpen((prev) => !prev);
+          setSidebarOpen(false);
+        }}
+        isGeofenceDrawerOpen={isGeofenceDrawerOpen}
+      />
 
       <Toast />
     </div>

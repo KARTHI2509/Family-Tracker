@@ -33,7 +33,7 @@ export default function Header({ onToggleSidebar, familyName }) {
           title="Location permission denied in browser. Click to retry."
         >
           <AlertTriangle size={13} />
-          <span>GPS Blocked</span>
+          <span className="header-pill-text">GPS Blocked</span>
         </button>
       );
     }
@@ -58,7 +58,7 @@ export default function Header({ onToggleSidebar, familyName }) {
         >
           <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#10B981', display: 'inline-block' }} />
           <Navigation size={12} />
-          <span>Sharing Live</span>
+          <span className="header-pill-text">Sharing Live</span>
         </button>
       );
     }
@@ -81,7 +81,7 @@ export default function Header({ onToggleSidebar, familyName }) {
         title="Location sharing is paused. Click to start broadcasting."
       >
         <NavigationOff size={13} />
-        <span>Share Location</span>
+        <span className="header-pill-text">Share Location</span>
       </button>
     );
   };
@@ -130,7 +130,7 @@ export default function Header({ onToggleSidebar, familyName }) {
             title="Start a tracked trip or send emergency check-in"
           >
             <Send size={13} />
-            <span>Trip & Check-In</span>
+            <span className="header-pill-text">Trip & Check-In</span>
           </button>
 
           {/* Battery Mode Switcher */}
@@ -152,7 +152,7 @@ export default function Header({ onToggleSidebar, familyName }) {
               title="Change location refresh frequency"
             >
               <BatteryCharging size={13} />
-              <span style={{ textTransform: 'capitalize' }}>
+              <span className="header-pill-text" style={{ textTransform: 'capitalize' }}>
                 {trackingMode === 'battery_saver' ? 'Eco (10m)' : (trackingMode === 'high_accuracy' ? 'Live (1m)' : 'Balanced (5m)')}
               </span>
             </button>
@@ -249,7 +249,7 @@ export default function Header({ onToggleSidebar, familyName }) {
               }}
             >
               <ShieldCheck size={14} />
-              <span>Admin</span>
+              <span className="header-pill-text">Admin</span>
             </Link>
           )}
 
@@ -268,7 +268,7 @@ export default function Header({ onToggleSidebar, familyName }) {
               style={{ padding: '6px 10px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
             >
               <LogOut size={16} />
-              <span style={{ fontSize: '12px' }}>Logout</span>
+              <span className="header-pill-text" style={{ fontSize: '12px' }}>Logout</span>
             </button>
           </div>
         </div>
