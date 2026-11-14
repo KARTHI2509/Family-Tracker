@@ -281,6 +281,21 @@ setInterval(() => {
   }
 }, 24 * 60 * 60 * 1000);
 
+// Serve APK download directly for easy mobile installation
+app.get(['/FamilyTracker.apk', '/download/app', '/download/apk'], (req, res) => {
+  const candidates = [
+    path.join(__dirname, '../public/FamilyTracker.apk'),
+    path.join(__dirname, '../../frontend/public/FamilyTracker.apk'),
+    path.join(__dirname, '../../frontend/android/app/build/outputs/apk/debug/app-debug.apk')
+  ];
+  for (const apkPath of candidates) {
+    if (fs.existsSync(apkPath)) {
+      return res.download(apkPath, 'FamilyTracker.apk');
+    }
+  }
+  res.status(404).send('APK file not found on server.');
+});
+
 // Serve production frontend assets if built
 const frontendDist = path.join(__dirname, '../../frontend/dist');
 if (fs.existsSync(frontendDist)) {
@@ -328,7 +343,10 @@ if (fs.existsSync(frontendDist)) {
       <div><strong>Role:</strong> Backend Web Service</div>
     </div>
     <p style="font-size: 13px;">To use the application interface, open your <strong>Vercel frontend URL</strong> or on your laptop at <a href="http://localhost:5173" style="color: #60a5fa;">localhost:5173</a>.</p>
-    <a class="btn" href="/api/health" target="_blank">View Health API JSON</a>
+    <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+      <a class="btn" href="/FamilyTracker.apk" style="background: #10b981;">📲 Download Android APK</a>
+      <a class="btn" href="/api/health" target="_blank" style="background: #334155;">View Health API JSON</a>
+    </div>
   </div>
 </body>
 </html>`);

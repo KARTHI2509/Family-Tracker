@@ -296,13 +296,22 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
                 <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--text-300)', lineHeight: '1.5' }}>
                   Web browsers (including installed PWAs) run inside an operating system security sandbox. Web browsers <strong>cannot</strong> run continuous background services when minimized, closed, or when the phone screen is locked.
                 </p>
-                <div style={{ background: 'var(--bg-900)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '10px 12px', marginBottom: '10px' }}>
-                  <div style={{ color: '#fff', fontSize: '12px', fontWeight: 600, marginBottom: '2px' }}>
-                    📱 Install the Native Android Application
+                <div style={{ background: 'var(--bg-900)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '12px', marginBottom: '10px' }}>
+                  <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Smartphone size={16} color="#34d399" />
+                    <span>Install the Native Android Application</span>
                   </div>
-                  <div style={{ color: 'var(--text-400)', fontSize: '11px', lineHeight: '1.4' }}>
-                    To get guaranteed 24/7 continuous background tracking with a locked screen, use the native <strong>Android APK</strong>. It includes an official Android Foreground Service (`LocationForegroundService`) that runs in the status bar.
+                  <div style={{ color: 'var(--text-400)', fontSize: '12px', lineHeight: '1.4', marginBottom: '10px' }}>
+                    Guarantees 24/7 continuous background tracking with phone locked in your pocket. Includes Android Foreground Service with live status bar notification.
                   </div>
+                  <a
+                    href="/FamilyTracker.apk"
+                    download="FamilyTracker.apk"
+                    className="btn btn-primary"
+                    style={{ fontSize: '13px', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none' }}
+                  >
+                    <span>📲 Download Android APK (4.3 MB)</span>
+                  </a>
                 </div>
               </div>
             </div>
