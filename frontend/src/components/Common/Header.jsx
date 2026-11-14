@@ -2,13 +2,15 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useFamily } from '../../context/FamilyContext';
-import { Menu, LogOut, Navigation, NavigationOff, AlertTriangle, ShieldCheck, BatteryCharging, Send } from 'lucide-react';
+import { Menu, LogOut, Navigation, NavigationOff, AlertTriangle, ShieldCheck, BatteryCharging, Send, Settings } from 'lucide-react';
 import JourneyModal from '../Dashboard/JourneyModal';
+import LocationSettingsModal from '../Settings/LocationSettingsModal';
 
 export default function Header({ onToggleSidebar, familyName }) {
   const { user, logout } = useAuth();
   const { isTrackingEnabled, toggleTracking, trackingStatus, trackingMode, setTrackingMode } = useFamily();
   const [isJourneyModalOpen, setIsJourneyModalOpen] = useState(false);
+  const [isLocationSettingsOpen, setIsLocationSettingsOpen] = useState(false);
   const [showModeDropdown, setShowModeDropdown] = useState(false);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -18,7 +20,7 @@ export default function Header({ onToggleSidebar, familyName }) {
       return (
         <button
           className="btn btn-ghost"
-          onClick={() => toggleTracking(true)}
+          onClick={() => setIsLocationSettingsOpen(true)}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -253,6 +255,17 @@ export default function Header({ onToggleSidebar, familyName }) {
             </Link>
           )}
 
+          {/* Location Permissions & Settings Button */}
+          <button
+            className="btn btn-ghost"
+            onClick={() => setIsLocationSettingsOpen(true)}
+            title="Location Permissions & Tracking Settings"
+            style={{ padding: '6px', color: 'var(--text-300)' }}
+            aria-label="Location Settings"
+          >
+            <Settings size={18} />
+          </button>
+
           <div className="user-menu" style={{ marginLeft: '4px' }}>
             <div
               className="user-avatar-small"
@@ -278,6 +291,12 @@ export default function Header({ onToggleSidebar, familyName }) {
       <JourneyModal
         isOpen={isJourneyModalOpen}
         onClose={() => setIsJourneyModalOpen(false)}
+      />
+
+      {/* Location Permissions Settings Modal */}
+      <LocationSettingsModal
+        isOpen={isLocationSettingsOpen}
+        onClose={() => setIsLocationSettingsOpen(false)}
       />
     </>
   );

@@ -49,3 +49,14 @@ Thumbs.db
 .idea/
 .vscode/
 coverage/
+
+# Native Mobile Builds & Caches
+.gradle/
+frontend/android/.gradle/
+frontend/android/build/
+frontend/android/app/build/
+frontend/android/.idea/
+*.apk
+*.aab
+frontend/ios/App/Pods/
+frontend/ios/App/.build/

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">FamilyTracker</string>
+    <string name="title_activity_main">FamilyTracker</string>
+    <string name="package_name">com.familytracker.app</string>
+    <string name="custom_url_scheme">com.familytracker.app</string>
+</resources>

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { io } from 'socket.io-client';
 import api from '../services/api';
 import { useAuth } from './AuthContext';
+import nativeLocationService from '../services/nativeLocationService';
 
 const FamilyContext = createContext(null);
 
@@ -278,77 +279,82 @@ export function FamilyProvider({ children }) {
   }, []);
 
   // Location tracking management with explicit consent
-  const toggleTracking = useCallback((enable) => {
+  const toggleTracking = useCallback(async (enable) => {
     setIsTrackingEnabled(enable);
     localStorage.setItem('ft_tracking_enabled', enable ? 'true' : 'false');
     if (enable) {
       addToast('success', 'Location Sharing Started', 'Your family can now see your live updates.');
+      setTrackingStatus('tracking');
     } else {
       addToast('info', 'Location Sharing Paused', 'Your live location is no longer being broadcast.');
       setTrackingStatus('idle');
+      await nativeLocationService.stopTracking().catch(() => {});
     }
   }, [addToast]);
 
-  // Handle browser geolocation lifecycle when enabled
+  // Hybrid Location Upload: transmits via both direct HTTPS API and live Socket.IO
+  const uploadLocationFix = useCallback(async (payload) => {
+    try {
+      // 1. Direct HTTPS POST (ensures background updates arrive even if Socket.IO drops)
+      await api.post('/location/update', payload);
+
+      // 2. Broadcast via Socket.IO for instant zero-latency peer updates
+      if (socket && isConnected) {
+        socket.emit('update_location', payload);
+      }
+
+      setLastLocationUpdateTime(new Date());
+      setTrackingStatus('tracking');
+    } catch (err) {
+      console.warn('[FamilyContext] Location update error:', err.message);
+    }
+  }, [socket, isConnected]);
+
+  // Native & Background Geolocation lifecycle
   useEffect(() => {
     if (!user || !token || !isTrackingEnabled) {
-      // Clear any active watchers if tracking is disabled
-      if (locationWatchRef.current !== null && navigator.geolocation) {
-        navigator.geolocation.clearWatch(locationWatchRef.current);
-        locationWatchRef.current = null;
-      }
-      if (locationIntervalRef.current) {
-        clearInterval(locationIntervalRef.current);
-        locationIntervalRef.current = null;
-      }
+      nativeLocationService.stopTracking().catch(() => {});
       return;
     }
 
-    if (!navigator.geolocation) {
-      setTrackingStatus('error');
-      addToast('warning', 'GPS Unavailable', 'Geolocation is not supported by your browser.');
-      return;
-    }
+    // Subscribe to native location updates
+    const unsubscribe = nativeLocationService.subscribe((loc) => {
+      setLastLocationUpdateTime(new Date(loc.timestamp));
+      setTrackingStatus('tracking');
 
-    setTrackingStatus('tracking');
-
-    // Real-time movement watcher
-    locationWatchRef.current = navigator.geolocation.watchPosition(
-      (pos) => sendLocationUpdate(pos),
-      (err) => {
-        if (err.code === err.PERMISSION_DENIED) {
-          setTrackingStatus('denied');
-          setIsTrackingEnabled(false);
-          localStorage.setItem('ft_tracking_enabled', 'false');
-          addToast('error', 'Location Denied', 'Please grant location permissions in your browser to share location.');
-        } else {
-          setTrackingStatus('error');
+      // Optimistically update current user's marker locally
+      setMembers(prev => prev.map(m => {
+        if (m.id === user.id) {
+          return {
+            ...m,
+            latitude: loc.latitude,
+            longitude: loc.longitude,
+            latest_location: {
+              ...m.latest_location,
+              latitude: loc.latitude,
+              longitude: loc.longitude,
+              accuracy: loc.accuracy,
+              speed: loc.speed,
+              battery_level: loc.battery_level,
+              is_charging: loc.is_charging,
+              timestamp: loc.timestamp
+            }
+          };
         }
-      },
-      { enableHighAccuracy: true, maximumAge: 30000, timeout: 15000 }
-    );
+        return m;
+      }));
+    });
 
-    // Periodic sync interval adapted to battery tracking mode
-    const syncIntervalMs = trackingMode === 'battery_saver' ? 10 * 60 * 1000 : (trackingMode === 'high_accuracy' ? 60 * 1000 : 5 * 60 * 1000);
-    locationIntervalRef.current = setInterval(() => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => sendLocationUpdate(pos),
-        () => {},
-        { enableHighAccuracy: trackingMode === 'high_accuracy', maximumAge: 60000, timeout: 10000 }
-      );
-    }, syncIntervalMs);
+    // Start tracking in selected mode
+    nativeLocationService.startTracking(trackingMode, uploadLocationFix).catch((err) => {
+      console.warn('Native tracking error:', err);
+      setTrackingStatus('error');
+    });
 
     return () => {
-      if (locationWatchRef.current !== null && navigator.geolocation) {
-        navigator.geolocation.clearWatch(locationWatchRef.current);
-        locationWatchRef.current = null;
-      }
-      if (locationIntervalRef.current) {
-        clearInterval(locationIntervalRef.current);
-        locationIntervalRef.current = null;
-      }
+      unsubscribe();
     };
-  }, [user, token, isTrackingEnabled, trackingMode, sendLocationUpdate, addToast]);
+  }, [user, token, isTrackingEnabled, trackingMode, uploadLocationFix]);
 
   // Socket.IO real-time connection and contract handling
   useEffect(() => {
