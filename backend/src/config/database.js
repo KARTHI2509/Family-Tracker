@@ -2,23 +2,46 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
-// Resolve database path safely for local, Docker, or Cloud deployments
-let dbPath;
-if (process.env.DB_PATH) {
-  dbPath = path.isAbsolute(process.env.DB_PATH)
-    ? process.env.DB_PATH
-    : path.resolve(__dirname, '..', '..', process.env.DB_PATH);
-} else {
-  dbPath = path.resolve(__dirname, '..', '..', 'data', 'familytracker.db');
+// Resolve database path safely for local, Docker, or Cloud deployments (Render, Railway, etc.)
+function initDatabase() {
+  const candidates = [];
+
+  // Priority 1: User-specified DB_PATH if set
+  if (process.env.DB_PATH) {
+    const customPath = path.isAbsolute(process.env.DB_PATH)
+      ? process.env.DB_PATH
+      : path.resolve(__dirname, '..', '..', process.env.DB_PATH);
+    candidates.push(customPath);
+  }
+
+  // Priority 2: Standard project local data directory
+  candidates.push(path.resolve(__dirname, '..', '..', 'data', 'familytracker.db'));
+
+  // Priority 3: OS temp directory (failsafe in restricted cloud containers)
+  const os = require('os');
+  candidates.push(path.resolve(os.tmpdir(), 'familytracker.db'));
+
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      const dataDir = path.dirname(candidate);
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      const instance = new Database(candidate);
+      instance.dbPath = candidate;
+      console.log(`[Database] SQLite connected successfully at: ${candidate}`);
+      return instance;
+    } catch (err) {
+      console.warn(`[Database] Notice: Could not initialize database at "${candidate}": ${err.message}. Trying next fallback...`);
+      lastError = err;
+    }
+  }
+
+  throw new Error(`[Database] Failed to initialize SQLite storage in all candidate paths: ${lastError?.message}`);
 }
 
-// Ensure database directory exists
-const dataDir = path.dirname(dbPath);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-const db = new Database(dbPath);
+const db = initDatabase();
 
 // Enable WAL mode and foreign key constraints
 db.pragma('journal_mode = WAL');
@@ -210,6 +233,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_emergency_grants_admin ON emergency_access_grants(admin_id, expires_at);
 `);
 
-console.log('Database initialized successfully at:', dbPath);
+console.log('Database schema ready. SQLite database at:', db.dbPath);
 
 module.exports = db;

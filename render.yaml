@@ -2,15 +2,11 @@ services:
   - type: web
     name: familytracker-backend
     env: node
-    plan: starter
+    plan: free
     rootDir: backend
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health
-    disk:
-      name: familytracker-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: NODE_VERSION
         value: 20.18.0
@@ -19,7 +15,7 @@ services:
       - key: PORT
         value: 3001
       - key: DB_PATH
-        value: /data/familytracker.db
+        value: ./data/familytracker.db
       - key: JWT_SECRET
         generateValue: true
       - key: FRONTEND_URL
