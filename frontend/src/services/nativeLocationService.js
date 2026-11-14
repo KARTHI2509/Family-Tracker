@@ -7,6 +7,7 @@ import { App } from '@capacitor/app';
 const STORAGE_KEYS = {
   TRACKING_ENABLED: 'ft_native_tracking_enabled',
   TRACKING_MODE: 'ft_native_tracking_mode',
+  DESIRED_PERMISSION: 'ft_desired_permission',
   OFFLINE_QUEUE: 'ft_offline_location_queue',
   LAST_LOCATION: 'ft_last_known_location',
 };
@@ -50,6 +51,13 @@ class NativeLocationService {
     this.currentMode = 'balanced';
     this.subscribers = new Set();
     this.isSyncingQueue = false;
+    this.wakeLock = null;
+    this.desiredPermission = 'always';
+
+    // Initialize desired permission from storage
+    this.getDesiredPermission().then((val) => {
+      this.desiredPermission = val;
+    });
 
     // Listen for network connectivity to flush offline location queue
     if (this.isNative) {
@@ -91,47 +99,133 @@ class NativeLocationService {
   }
 
   /**
+   * Screen Wake Lock for Web browser keeping continuous tracking active
+   */
+  async requestWakeLock() {
+    if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+      try {
+        if (!this.wakeLock) {
+          this.wakeLock = await navigator.wakeLock.request('screen');
+          console.log('[NativeLocation] Screen Wake Lock acquired (continuous tracking active).');
+          this.wakeLock.addEventListener('release', () => {
+            console.log('[NativeLocation] Screen Wake Lock released.');
+            this.wakeLock = null;
+          });
+        }
+      } catch (err) {
+        console.warn('[NativeLocation] Wake Lock notice:', err.message);
+      }
+    }
+  }
+
+  releaseWakeLock() {
+    if (this.wakeLock) {
+      try {
+        this.wakeLock.release().catch(() => {});
+      } catch (_) {}
+      this.wakeLock = null;
+    }
+  }
+
+  /**
+   * Get desired user permission level ('always' | 'while_using' | 'denied')
+   */
+  async getDesiredPermission() {
+    try {
+      const { value } = await Preferences.get({ key: STORAGE_KEYS.DESIRED_PERMISSION });
+      return value || 'always';
+    } catch (_) {
+      return 'always';
+    }
+  }
+
+  /**
+   * Set desired user permission level
+   */
+  async setDesiredPermission(level) {
+    this.desiredPermission = level;
+    try {
+      await Preferences.set({ key: STORAGE_KEYS.DESIRED_PERMISSION, value: level });
+      if (level === 'always') {
+        if (!this.isNative && this.isTracking) {
+          await this.requestWakeLock();
+        }
+      } else if (level === 'denied') {
+        await this.stopTracking();
+      }
+    } catch (e) {
+      console.warn('[NativeLocation] setDesiredPermission error:', e);
+    }
+  }
+
+  /**
    * Check OS Location Permission Status
    */
   async checkPermissions() {
+    const desired = await this.getDesiredPermission();
+    this.desiredPermission = desired;
+
     if (!('geolocation' in navigator)) {
-      return { status: 'unsupported', foreground: false, background: false };
+      return {
+        status: 'unsupported',
+        foreground: false,
+        background: false,
+        desired,
+        platform: this.platform,
+        hasWakeLock: Boolean(this.wakeLock)
+      };
     }
+
+    let isGranted = false;
+    let queryState = 'prompt';
 
     try {
       if (navigator.permissions && navigator.permissions.query) {
         const result = await navigator.permissions.query({ name: 'geolocation' });
-        const isGranted = result.state === 'granted';
-        return {
-          status: result.state, // 'granted' | 'denied' | 'prompt'
-          foreground: isGranted,
-          background: isGranted && this.isNative,
-          platform: this.platform,
-        };
+        queryState = result.state;
+        isGranted = result.state === 'granted';
       }
     } catch (_) {
-      // Some browsers don't support navigator.permissions.query for geolocation
+      // Fallback
+    }
+
+    // Determine background capability and active status
+    let backgroundGranted = false;
+    if (isGranted) {
+      if (desired === 'always') {
+        // In native, OS background permission is available; on Web, wakeLock/keep-alive ensures continuous tracking
+        backgroundGranted = true;
+      }
     }
 
     return {
-      status: 'unknown',
-      foreground: true,
-      background: this.isNative,
+      status: queryState,
+      foreground: isGranted,
+      background: backgroundGranted,
+      desired,
       platform: this.platform,
+      hasWakeLock: Boolean(this.wakeLock)
     };
   }
 
   /**
    * Request Location Permissions
    */
-  async requestPermissions() {
+  async requestPermissions(targetLevel = 'always') {
+    await this.setDesiredPermission(targetLevel);
+
     return new Promise((resolve) => {
       if (!navigator.geolocation) {
         return resolve({ granted: false, error: 'Geolocation not supported' });
       }
 
       navigator.geolocation.getCurrentPosition(
-        () => resolve({ granted: true, status: 'granted' }),
+        async () => {
+          if (targetLevel === 'always' && !this.isNative) {
+            await this.requestWakeLock();
+          }
+          resolve({ granted: true, status: 'granted', desired: targetLevel });
+        },
         (err) => resolve({ granted: false, status: 'denied', code: err.code, error: err.message }),
         { enableHighAccuracy: true, timeout: 10000 }
       );
@@ -173,6 +267,11 @@ class NativeLocationService {
 
     await Preferences.set({ key: STORAGE_KEYS.TRACKING_ENABLED, value: 'true' });
     await Preferences.set({ key: STORAGE_KEYS.TRACKING_MODE, value: mode });
+
+    // If desired permission is 'always' on Web, acquire Screen Wake Lock
+    if (this.desiredPermission === 'always' && !this.isNative) {
+      await this.requestWakeLock();
+    }
 
     const config = TRACKING_MODES[mode] || TRACKING_MODES.balanced;
 
@@ -367,6 +466,8 @@ class NativeLocationService {
       this.intervalTimer = null;
     }
 
+    this.releaseWakeLock();
+
     await Preferences.set({ key: STORAGE_KEYS.TRACKING_ENABLED, value: 'false' });
     console.log('[NativeLocation] Tracking stopped.');
   }
@@ -386,3 +487,4 @@ class NativeLocationService {
 
 export const nativeLocationService = new NativeLocationService();
 export default nativeLocationService;
+
