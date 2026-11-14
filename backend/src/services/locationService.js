@@ -42,20 +42,30 @@ function isValidCoordinate(lat, lon) {
 }
 
 /**
- * Save a new location record for a user.
+ * Save a new location record for a user with family privacy context.
  */
-function saveLocation(userId, locationData) {
+function saveLocation(userId, locationData, familyId = null) {
   const { latitude, longitude, accuracy, speed, battery_level, is_charging, address } = locationData;
 
   const nowIso = new Date().toISOString();
 
+  // Resolve familyId if not directly provided
+  let activeFamilyId = familyId;
+  if (!activeFamilyId) {
+    try {
+      const u = db.prepare('SELECT family_id FROM users WHERE id = ?').get(userId);
+      activeFamilyId = u?.family_id || null;
+    } catch (_) {}
+  }
+
   const stmt = db.prepare(`
-    INSERT INTO locations (user_id, latitude, longitude, accuracy, speed, battery_level, is_charging, address, timestamp)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO locations (user_id, family_id, latitude, longitude, accuracy, speed, battery_level, is_charging, address, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = stmt.run(
     userId,
+    activeFamilyId,
     Number(latitude),
     Number(longitude),
     accuracy != null ? Number(accuracy) : null,
@@ -69,6 +79,7 @@ function saveLocation(userId, locationData) {
   return {
     id: result.lastInsertRowid,
     user_id: userId,
+    family_id: activeFamilyId,
     latitude: Number(latitude),
     longitude: Number(longitude),
     accuracy,
@@ -82,6 +93,7 @@ function saveLocation(userId, locationData) {
 
 /**
  * Get the latest location for each member in a family.
+ * Strictly scoped by family_id to prevent cross-family location leakage.
  */
 function getLatestLocations(familyId) {
   const stmt = db.prepare(`
@@ -91,21 +103,27 @@ function getLatestLocations(familyId) {
     INNER JOIN (
       SELECT user_id, MAX(id) as max_id
       FROM locations
-      WHERE user_id IN (SELECT id FROM users WHERE family_id = ?)
+      WHERE family_id = ?
       GROUP BY user_id
     ) latest ON l.id = latest.max_id
-    WHERE u.family_id = ?
+    WHERE u.family_id = ? AND l.family_id = ?
   `);
 
-  return stmt.all(familyId, familyId);
+  return stmt.all(familyId, familyId, familyId);
 }
 
 /**
  * Get location history for a specific user within a date range with sensible limits.
+ * Optional familyId enforcement to prevent past family location leakage into new families.
  */
-function getLocationHistory(userId, from, to, limit = 500) {
+function getLocationHistory(userId, from, to, limit = 500, familyId = null) {
   let query = 'SELECT * FROM locations WHERE user_id = ?';
   const params = [userId];
+
+  if (familyId != null) {
+    query += ' AND family_id = ?';
+    params.push(familyId);
+  }
 
   if (from) {
     query += ' AND timestamp >= ?';

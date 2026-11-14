@@ -22,7 +22,7 @@ router.post('/update', (req, res) => {
       return res.status(400).json({ error: 'Valid latitude (-90 to 90) and longitude (-180 to 180) are required.' });
     }
 
-    // Save location
+    // Save location with family context for strict privacy boundaries
     const savedLocation = locationService.saveLocation(req.user.id, {
       latitude: Number(latitude),
       longitude: Number(longitude),
@@ -31,7 +31,7 @@ router.post('/update', (req, res) => {
       battery_level,
       is_charging,
       address
-    });
+    }, req.user.family_id);
 
     const newAlerts = [];
     let geofenceEvents = [];
@@ -186,7 +186,8 @@ router.get('/history/:userId', (req, res) => {
       targetUserId,
       from || null,
       to || null,
-      parseInt(limit, 10) || 500
+      parseInt(limit, 10) || 500,
+      req.user.family_id
     );
 
     // Provide both history and locations keys to guarantee agreement with any frontend consumer

@@ -462,6 +462,95 @@ async function runTests() {
     const purgedCount = locationService.cleanupExpiredLocations(7);
     recordTest('V2: 7-Day Location Retention Scheduled Purge', typeof purgedCount === 'number');
 
+    // ==================================================
+    // V3 Tests: Complete Family Management & Switch Family
+    // ==================================================
+
+    // V3 Test 1: GET /api/family/details for Alice
+    const aliceFamilyDetails = await request('GET', '/api/family/details', null, tokenAlice);
+    recordTest('V3: GET /api/family/details', aliceFamilyDetails.status === 200 && aliceFamilyDetails.data?.userRole === 'owner');
+
+    // V3 Test 2: POST /api/family/validate-code with invalid code (404)
+    const badCodeValidate = await request('POST', '/api/family/validate-code', { inviteCode: 'NONEXIST' }, tokenBob);
+    recordTest('V3: Validate Code rejects non-existent family (404)', badCodeValidate.status === 404);
+
+    // V3 Test 3: POST /api/family/validate-code with own family code (400)
+    const ownCodeValidate = await request('POST', '/api/family/validate-code', { inviteCode: aliceFamilyDetails.data?.family?.invite_code }, tokenBob);
+    recordTest('V3: Validate Code rejects already joined family (400)', ownCodeValidate.status === 400);
+
+    // V3 Test 4: Register Evelyn & Create Second Family ("Evelyn Circle")
+    const regEvelyn = await request('POST', '/api/auth/register', {
+      name: 'Evelyn Brown',
+      email: 'evelyn@example.com',
+      password: 'password123'
+    });
+    const tokenEvelyn = regEvelyn.data?.token;
+    const evelynId = regEvelyn.data?.user?.id;
+
+    const createFamily2 = await request('POST', '/api/family/create', { name: 'Evelyn Circle' }, tokenEvelyn);
+    const evelynInviteCode = createFamily2.data?.invite_code;
+    const evelynFamilyId = createFamily2.data?.family?.id;
+    recordTest('V3: Register User (Evelyn) & Create Family 2', createFamily2.status === 201 && !!evelynInviteCode);
+
+    // V3 Test 5: Validate Evelyn's invite code from Bob
+    const evelynCodeValidate = await request('POST', '/api/family/validate-code', { inviteCode: evelynInviteCode }, tokenBob);
+    recordTest('V3: Validate Target Family Code Preview', evelynCodeValidate.status === 200 && evelynCodeValidate.data?.familyName === 'Evelyn Circle');
+
+    // V3 Test 6: Secure Atomic Switch of Bob from Alice's Family to Evelyn's Family
+    const switchBob = await request('POST', '/api/family/switch', { inviteCode: evelynInviteCode }, tokenBob);
+    recordTest('V3: POST /api/family/switch executes atomically', switchBob.status === 200 && switchBob.data?.family?.id === evelynFamilyId);
+
+    // V3 Test 7: Verify Bob is removed from Alice's Family roster and present in Evelyn's
+    const aliceMembersAfter = await request('GET', '/api/family/members', null, tokenAlice);
+    const evelynMembersAfter = await request('GET', '/api/family/members', null, tokenEvelyn);
+    const bobInAlice = (aliceMembersAfter.data?.members || []).some(m => m.id === bobId);
+    const bobInEvelyn = (evelynMembersAfter.data?.members || []).some(m => m.id === bobId);
+    recordTest('V3: Member roster updated immediately in both families', !bobInAlice && bobInEvelyn);
+
+    // V3 Test 8: Cross-Family Privacy & Location Isolation
+    // Post new location for Bob while he is in Evelyn's family
+    await request('POST', '/api/location/update', {
+      latitude: 40.7128,
+      longitude: -74.0060,
+      accuracy: 10,
+      batteryLevel: 95
+    }, tokenBob);
+
+    // Alice (in old family) queries latest locations and history of Bob
+    const aliceLatestLocs = await request('GET', '/api/location/latest', null, tokenAlice);
+    const aliceHistoryBob = await request('GET', `/api/location/history/${bobId}`, null, tokenAlice);
+    const bobVisibleToAlice = (aliceLatestLocs.data?.locations || []).some(l => l.user_id === bobId);
+    recordTest('V3 Security: Absolute Cross-Family Location Isolation (Old Family cannot see Bob)', !bobVisibleToAlice && (aliceHistoryBob.status === 403 || (aliceHistoryBob.data?.history || []).length === 0));
+
+    // V3 Test 9: Owner Succession during Switch
+    // Register Dave into Alice's family
+    const regDave = await request('POST', '/api/auth/register', {
+      name: 'Dave Miller',
+      email: 'dave@example.com',
+      password: 'password123'
+    });
+    const tokenDave = regDave.data?.token;
+    const daveId = regDave.data?.user?.id;
+    await request('POST', '/api/family/join', { inviteCode: aliceFamilyDetails.data?.family?.invite_code }, tokenDave);
+
+    // Alice (Owner) switches to Evelyn's family, passing Dave as successor
+    const aliceSwitch = await request('POST', '/api/family/switch', {
+      inviteCode: evelynInviteCode,
+      transferOwnerTo: daveId
+    }, tokenAlice);
+    recordTest('V3: Family Owner switches with atomic Owner Succession', aliceSwitch.status === 200);
+
+    // Check that Dave is now the recognized Owner of Alice's old family
+    const daveDetails = await request('GET', '/api/family/details', null, tokenDave);
+    recordTest('V3: Successor (Dave) promoted to Family Owner', daveDetails.status === 200 && daveDetails.data?.userRole === 'owner');
+
+    // V3 Test 10: Leave Family
+    const daveLeave = await request('POST', '/api/family/leave', {}, tokenDave);
+    recordTest('V3: POST /api/family/leave', daveLeave.status === 200);
+
+    const daveMe = await request('GET', '/api/auth/me', null, tokenDave);
+    recordTest('V3: User family_id cleared after leaving family', daveMe.data?.user?.family_id === null || daveMe.data?.user?.family_id === undefined);
+
   } catch (err) {
     console.error('Fatal test error:', err);
     recordTest('Test Runner Execution', false, err.message);

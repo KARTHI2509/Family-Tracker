@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useFamily } from '../../context/FamilyContext';
-import { Menu, LogOut, Navigation, NavigationOff, AlertTriangle, ShieldCheck, BatteryCharging, Send, Settings } from 'lucide-react';
+import { Menu, LogOut, Navigation, NavigationOff, AlertTriangle, ShieldCheck, BatteryCharging, Send, Settings, Users } from 'lucide-react';
 import JourneyModal from '../Dashboard/JourneyModal';
 import LocationSettingsModal from '../Settings/LocationSettingsModal';
 
-export default function Header({ onToggleSidebar, familyName }) {
+export default function Header({ onToggleSidebar, familyName, onOpenFamilyManagement }) {
   const { user, logout } = useAuth();
   const { isTrackingEnabled, toggleTracking, trackingStatus, trackingMode, setTrackingMode } = useFamily();
   const [isJourneyModalOpen, setIsJourneyModalOpen] = useState(false);
@@ -107,13 +107,55 @@ export default function Header({ onToggleSidebar, familyName }) {
           </div>
 
           {familyName && (
-            <span className="family-name-badge">
-              {familyName}
-            </span>
+            <button
+              type="button"
+              className="family-name-badge clickable"
+              onClick={onOpenFamilyManagement}
+              title="Manage Family Circle, Switch or Leave"
+              style={{
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                border: '1px solid rgba(99, 102, 241, 0.4)',
+                background: 'rgba(99, 102, 241, 0.15)',
+                color: 'var(--text-100)',
+                padding: '4px 10px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                fontWeight: 600,
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <Users size={13} color="#818CF8" />
+              <span>{familyName}</span>
+            </button>
           )}
         </div>
 
         <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* Family Circle Management Button */}
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onOpenFamilyManagement}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '12px',
+              padding: '4px 10px',
+              borderRadius: '9999px',
+              background: 'rgba(99, 102, 241, 0.12)',
+              color: '#A5B4FC',
+              border: '1px solid rgba(99, 102, 241, 0.3)'
+            }}
+            title="Manage Family Circle, Switch or Leave"
+          >
+            <Users size={13} />
+            <span className="header-pill-text">Family Circle</span>
+          </button>
+
           {/* Journey Safety & Check-In Button */}
           <button
             className="btn btn-ghost"

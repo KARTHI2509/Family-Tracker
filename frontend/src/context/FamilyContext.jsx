@@ -13,10 +13,12 @@ export function useFamily() {
 }
 
 export function FamilyProvider({ children }) {
-  const { user, token } = useAuth();
+  const { user, token, refreshUser } = useAuth();
   const [members, setMembers] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [geofences, setGeofences] = useState([]);
+  const [familyDetails, setFamilyDetails] = useState(null);
+  const [pendingConsentFamily, setPendingConsentFamily] = useState(null); // When switching families, prompts for re-affirmation
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [activeSOSEvents, setActiveSOSEvents] = useState(new Set());
   const [socket, setSocket] = useState(null);
@@ -156,6 +158,107 @@ export function FamilyProvider({ children }) {
   const getInviteCode = async () => {
     const data = await api.get('/family/invite-code');
     return data.invite_code || data.inviteCode;
+  };
+
+  // Fetch complete current family details (owner, role, invite code)
+  const fetchFamilyDetails = useCallback(async () => {
+    try {
+      const data = await api.get('/family/details');
+      setFamilyDetails(data);
+      return data;
+    } catch (err) {
+      console.warn('Failed to fetch family details:', err);
+      return null;
+    }
+  }, []);
+
+  // Validate an invite code preview before switching
+  const validateInviteCode = async (inviteCode) => {
+    return await api.post('/family/validate-code', { inviteCode });
+  };
+
+  // Atomic Family Switch with Location Consent Pause
+  const switchFamily = async (inviteCode, transferOwnerTo = null) => {
+    // Phase 7: Automatically pause location sharing during audience change
+    setIsTrackingEnabled(false);
+    localStorage.setItem('ft_tracking_enabled', 'false');
+    await nativeLocationService.stopTracking().catch(() => {});
+
+    const data = await api.post('/family/switch', { inviteCode, transferOwnerTo });
+
+    // Clear old family state caches immediately
+    setMembers([]);
+    setAlerts([]);
+    setGeofences([]);
+    setActiveSOSEvents(new Set());
+    setActiveJourneys([]);
+
+    // Refresh user state
+    await refreshUser();
+
+    // Load new family resources
+    await Promise.all([
+      fetchMembers(),
+      fetchAlerts(),
+      fetchGeofences(),
+      fetchActiveSOS(),
+      fetchActiveJourneys(),
+      fetchFamilyDetails()
+    ]);
+
+    // Set pending consent prompt for the new family circle
+    setPendingConsentFamily(data.family);
+
+    addToast('success', 'Switched Family Circle', `You have securely joined "${data.family.name}"`);
+    return data;
+  };
+
+  // Leave Family with owner succession
+  const leaveFamily = async (transferOwnerTo = null) => {
+    setIsTrackingEnabled(false);
+    localStorage.setItem('ft_tracking_enabled', 'false');
+    await nativeLocationService.stopTracking().catch(() => {});
+
+    const data = await api.post('/family/leave', { transferOwnerTo });
+
+    // Clear all family data
+    setMembers([]);
+    setAlerts([]);
+    setGeofences([]);
+    setActiveSOSEvents(new Set());
+    setActiveJourneys([]);
+    setFamilyDetails(null);
+
+    await refreshUser();
+    addToast('info', 'Left Family', 'You have left the family circle.');
+    return data;
+  };
+
+  // Transfer Ownership explicitly
+  const transferOwnership = async (newOwnerId) => {
+    const data = await api.post('/family/transfer-owner', { newOwnerId });
+    await fetchFamilyDetails();
+    addToast('success', 'Ownership Transferred', data.message);
+    return data;
+  };
+
+  // Delete family entirely (owner only)
+  const deleteFamily = async () => {
+    setIsTrackingEnabled(false);
+    localStorage.setItem('ft_tracking_enabled', 'false');
+    await nativeLocationService.stopTracking().catch(() => {});
+
+    const data = await api.delete('/family/delete');
+    setMembers([]);
+    setAlerts([]);
+    setGeofences([]);
+    setActiveSOSEvents(new Set());
+    setActiveJourneys([]);
+    setFamilyDetails(null);
+
+    await refreshUser();
+    addToast('info', 'Family Deleted', 'The family circle was deleted.');
+    return data;
   };
 
   // Create geofence
@@ -475,6 +578,27 @@ export function FamilyProvider({ children }) {
       setMembers(prev => prev.filter(m => m.id !== leftId));
     });
 
+    // Member joined
+    s.on('member:joined', () => {
+      fetchMembers();
+      fetchFamilyDetails();
+    });
+
+    // Family owner changed
+    s.on('family:owner_changed', (data) => {
+      fetchFamilyDetails();
+      addToast('info', 'Family Owner Updated', `Family ownership is now with ${data.newOwnerName || 'another member'}.`);
+    });
+
+    // Family deleted
+    s.on('family:deleted', () => {
+      refreshUser();
+      setMembers([]);
+      setAlerts([]);
+      setGeofences([]);
+      addToast('warning', 'Family Disbanded', 'The family circle has been removed.');
+    });
+
     // Real-time Journey Events
     s.on('journey:started', (data) => {
       if (data.journey) {
@@ -511,13 +635,17 @@ export function FamilyProvider({ children }) {
       fetchGeofences();
       fetchActiveSOS();
       fetchActiveJourneys();
+      fetchFamilyDetails();
     }
-  }, [user, token, fetchMembers, fetchAlerts, fetchGeofences, fetchActiveSOS, fetchActiveJourneys]);
+  }, [user, token, fetchMembers, fetchAlerts, fetchGeofences, fetchActiveSOS, fetchActiveJourneys, fetchFamilyDetails]);
 
   const value = {
     members,
     alerts,
     geofences,
+    familyDetails,
+    pendingConsentFamily,
+    setPendingConsentFamily,
     onlineUsers,
     activeSOSEvents,
     activeJourneys,
@@ -535,10 +663,16 @@ export function FamilyProvider({ children }) {
     fetchMembers,
     fetchAlerts,
     fetchGeofences,
+    fetchFamilyDetails,
     fetchActiveJourneys,
     createFamily,
     joinFamily,
     getInviteCode,
+    validateInviteCode,
+    switchFamily,
+    leaveFamily,
+    transferOwnership,
+    deleteFamily,
     createGeofence,
     deleteGeofence,
     triggerSOS,

@@ -100,6 +100,31 @@ app.set('io', io);
 
 // Multi-device tracking: Map<userId, { socketIds: Set<string>, familyId: number, lastSeen: number, name: string, avatarColor: string }>
 const onlineUsers = new Map();
+app.set('onlineUsers', onlineUsers);
+
+// Multi-device family room migration helper for zero-leak room transitions
+app.set('migrateUserFamilySockets', (userId, oldFamilyId, newFamilyId) => {
+  const userSession = onlineUsers.get(userId);
+  if (userSession) {
+    userSession.familyId = newFamilyId || null;
+    if (userSession.socketIds) {
+      userSession.socketIds.forEach(sockId => {
+        const sock = io.sockets.sockets.get(sockId);
+        if (sock) {
+          if (oldFamilyId) {
+            sock.leave(`family:${oldFamilyId}`);
+          }
+          if (newFamilyId) {
+            sock.join(`family:${newFamilyId}`);
+            sock.user.family_id = newFamilyId;
+          } else {
+            sock.user.family_id = null;
+          }
+        }
+      });
+    }
+  }
+});
 
 // Socket.IO authentication middleware
 io.use((socket, next) => {

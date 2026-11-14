@@ -74,6 +74,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS locations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
+    family_id INTEGER,
     latitude REAL NOT NULL,
     longitude REAL NOT NULL,
     accuracy REAL,
@@ -82,7 +83,8 @@ db.exec(`
     is_charging INTEGER DEFAULT 0,
     address TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (family_id) REFERENCES families(id)
   );
 
   CREATE TABLE IF NOT EXISTS geofences (
@@ -218,9 +220,25 @@ try {
   console.warn('Migration note (sos_events):', migErr.message);
 }
 
+// Safe Migration: ensure locations has family_id column for cross-family privacy isolation
+try {
+  const locCols = db.prepare("PRAGMA table_info('locations')").all();
+  if (!locCols.some(c => c.name === 'family_id')) {
+    db.exec("ALTER TABLE locations ADD COLUMN family_id INTEGER REFERENCES families(id)");
+  }
+  db.exec(`
+    UPDATE locations
+    SET family_id = (SELECT family_id FROM users WHERE users.id = locations.user_id)
+    WHERE family_id IS NULL AND user_id IN (SELECT id FROM users WHERE family_id IS NOT NULL)
+  `);
+} catch (migErr) {
+  console.warn('Migration note (locations):', migErr.message);
+}
+
 // Performance indexes
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_locations_user_timestamp ON locations(user_id, timestamp);
+  CREATE INDEX IF NOT EXISTS idx_locations_family_id ON locations(family_id, user_id, timestamp);
   CREATE INDEX IF NOT EXISTS idx_users_family_id ON users(family_id);
   CREATE INDEX IF NOT EXISTS idx_alerts_family_created ON alerts(family_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_geofences_family ON geofences(family_id);

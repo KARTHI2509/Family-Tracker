@@ -9,17 +9,29 @@ import AlertsPanel from './AlertsPanel';
 import LocationHistory from './LocationHistory';
 import PanicButton from '../SOS/PanicButton';
 import MobileBottomNav from '../Navigation/MobileBottomNav';
+import FamilyManagementModal from '../Family/FamilyManagementModal';
+import SwitchFamilyModal from '../Family/SwitchFamilyModal';
+import LeaveFamilyModal from '../Family/LeaveFamilyModal';
+import LocationConsentModal from '../Family/LocationConsentModal';
 import { useFamily } from '../../context/FamilyContext';
 import { useAuth } from '../../context/AuthContext';
 import { Users, Bell, History, MapPin, ShieldAlert, Radio, X } from 'lucide-react';
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { members, alerts, geofences, onlineUsers, activeSOSEvents, activeJourneys } = useFamily();
+  const {
+    members, alerts, geofences, onlineUsers, activeSOSEvents, activeJourneys,
+    familyDetails, pendingConsentFamily, setPendingConsentFamily
+  } = useFamily();
   const [activeTab, setActiveTab] = useState('family');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState(null);
   const [focusedCoord, setFocusedCoord] = useState(null);
+
+  // Family Management Modals
+  const [isFamilyManagementOpen, setIsFamilyManagementOpen] = useState(false);
+  const [isSwitchFamilyOpen, setIsSwitchFamilyOpen] = useState(false);
+  const [isLeaveFamilyOpen, setIsLeaveFamilyOpen] = useState(false);
 
   // Safe zone / geofence picking state
   const [isGeofenceDrawerOpen, setIsGeofenceDrawerOpen] = useState(false);
@@ -76,6 +88,7 @@ export default function Dashboard() {
       <Header
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         familyName={user?.family_name || 'My Family Circle'}
+        onOpenFamilyManagement={() => setIsFamilyManagementOpen(true)}
       />
 
       {/* Emergency Alert Banner if any SOS is active */}
@@ -185,6 +198,9 @@ export default function Dashboard() {
               <FamilyPanel
                 onSelectMember={handleSelectMember}
                 selectedMemberId={selectedMember?.id}
+                onOpenManagement={() => setIsFamilyManagementOpen(true)}
+                onOpenSwitch={() => setIsSwitchFamilyOpen(true)}
+                onOpenLeave={() => setIsLeaveFamilyOpen(true)}
               />
             )}
             {activeTab === 'alerts' && <AlertsPanel />}
@@ -269,6 +285,39 @@ export default function Dashboard() {
           setSidebarOpen(false);
         }}
         isGeofenceDrawerOpen={isGeofenceDrawerOpen}
+      />
+
+      {/* Family Circle Management Modal */}
+      <FamilyManagementModal
+        isOpen={isFamilyManagementOpen}
+        onClose={() => setIsFamilyManagementOpen(false)}
+        onOpenSwitch={() => setIsSwitchFamilyOpen(true)}
+        onOpenLeave={() => setIsLeaveFamilyOpen(true)}
+      />
+
+      {/* Switch Family Modal */}
+      <SwitchFamilyModal
+        isOpen={isSwitchFamilyOpen}
+        onClose={() => setIsSwitchFamilyOpen(false)}
+        currentFamily={familyDetails?.family}
+        otherMembers={familyDetails?.otherMembers || []}
+        isOwner={familyDetails?.userRole === 'owner'}
+      />
+
+      {/* Leave Family Modal */}
+      <LeaveFamilyModal
+        isOpen={isLeaveFamilyOpen}
+        onClose={() => setIsLeaveFamilyOpen(false)}
+        currentFamily={familyDetails?.family}
+        otherMembers={familyDetails?.otherMembers || []}
+        isOwner={familyDetails?.userRole === 'owner'}
+      />
+
+      {/* Location Audience Consent Modal (Post-Switch) */}
+      <LocationConsentModal
+        isOpen={!!pendingConsentFamily}
+        newFamily={pendingConsentFamily}
+        onClose={() => setPendingConsentFamily(null)}
       />
 
       <Toast />
