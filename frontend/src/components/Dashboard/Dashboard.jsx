@@ -133,20 +133,22 @@ export default function Dashboard() {
           style={{
             background: 'var(--danger-600)',
             color: '#FFFFFF',
-            padding: '8px 16px',
+            padding: '8px 12px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            textAlign: 'center',
             gap: '8px',
-            fontSize: '13px',
+            fontSize: '12px',
             fontWeight: 700,
-            letterSpacing: '0.5px',
+            letterSpacing: '0.3px',
             animation: 'alertPulse 1.5s infinite',
-            zIndex: 950
+            zIndex: 950,
+            lineHeight: 1.4
           }}
         >
-          <ShieldAlert size={18} />
-          <span>EMERGENCY SOS IS ACTIVE FOR {activeSOSCount} FAMILY MEMBER(S)! CHECK MAP AND ALERTS IMMEDIATELY.</span>
+          <ShieldAlert size={18} style={{ flexShrink: 0 }} />
+          <span>EMERGENCY SOS IS ACTIVE FOR {activeSOSCount} MEMBER(S)!</span>
         </div>
       )}
 

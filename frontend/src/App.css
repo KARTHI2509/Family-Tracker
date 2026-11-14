@@ -864,6 +864,19 @@ input, button, select, textarea { font-family: inherit; }
   padding: 28px;
   box-shadow: var(--shadow-xl);
   animation: slideUp .3s ease;
+  box-sizing: border-box;
+}
+.location-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.location-telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  text-align: center;
+  margin-top: 12px;
 }
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(20px); }
@@ -1304,13 +1317,32 @@ input, button, select, textarea { font-family: inherit; }
   }
 
   /* Modals responsiveness */
+  .modal-overlay {
+    padding: 10px 8px !important;
+  }
   .modal {
-    width: calc(100% - 24px);
-    max-width: 480px;
-    margin: 12px;
-    padding: 24px 18px;
-    max-height: calc(100dvh - 36px);
-    overflow-y: auto;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding: 20px 14px !important;
+    max-height: calc(100dvh - 20px) !important;
+    overflow-y: auto !important;
+    box-sizing: border-box !important;
+    border-radius: var(--radius-lg) !important;
+  }
+
+  .hide-mobile {
+    display: none !important;
+  }
+
+  .location-status-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .location-telemetry-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
   }
 }
 
@@ -1342,6 +1374,10 @@ input, button, select, textarea { font-family: inherit; }
   .header { padding: 0 8px; }
   .header-right { gap: 4px; }
   .btn { padding: 8px 12px; font-size: 13px; }
+  .location-telemetry-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
 }
 
 /* Accessibility: Reduced Motion */

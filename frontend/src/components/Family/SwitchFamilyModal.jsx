@@ -81,7 +81,7 @@ export default function SwitchFamilyModal({ isOpen, onClose, currentFamily, othe
       <div
         className="modal"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: '500px', width: '100%', maxHeight: '90dvh', overflowY: 'auto' }}
+        style={{ maxWidth: '500px' }}
       >
         {/* Header */}
         <div className="modal-header" style={{ marginBottom: '16px' }}>

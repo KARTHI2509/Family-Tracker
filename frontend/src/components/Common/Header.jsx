@@ -137,7 +137,7 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
           {/* Family Circle Management Button */}
           <button
             type="button"
-            className="btn btn-ghost"
+            className="btn btn-ghost hide-mobile"
             onClick={onOpenFamilyManagement}
             style={{
               display: 'flex',
@@ -158,7 +158,7 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
 
           {/* Journey Safety & Check-In Button */}
           <button
-            className="btn btn-ghost"
+            className="btn btn-ghost hide-mobile"
             onClick={() => setIsJourneyModalOpen(true)}
             style={{
               display: 'flex',
@@ -178,7 +178,7 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
           </button>
 
           {/* Battery Mode Switcher */}
-          <div style={{ position: 'relative' }}>
+          <div className="hide-mobile" style={{ position: 'relative' }}>
             <button
               className="btn btn-ghost"
               onClick={() => setShowModeDropdown(!showModeDropdown)}

@@ -39,7 +39,7 @@ export default function AppUpdateModal({ isOpen, onClose, updateData }) {
       <div
         className="modal"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: '480px', width: '100%', maxHeight: '90dvh', overflowY: 'auto' }}
+        style={{ maxWidth: '480px' }}
       >
         {/* Header */}
         <div className="modal-header" style={{ marginBottom: '16px' }}>
