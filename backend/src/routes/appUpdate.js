@@ -9,7 +9,7 @@ const APP_RELEASE_INFO = {
   releaseDate: '2026-11-14',
   apkUrl: 'https://family-tracker-fidw.onrender.com/FamilyTracker.apk',
   downloadUrl: '/FamilyTracker.apk',
-  fileSizeBytes: 4354912,
+  fileSizeBytes: 12376373,
   releaseNotes: [
     '✨ Family Circle Management: Easily switch or leave families at any time',
     '👑 Owner Succession: Seamless ownership handover when leaving a circle',
@@ -53,3 +53,4 @@ router.get('/check-update', (req, res) => {
 });
 
 module.exports = router;
+

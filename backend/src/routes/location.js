@@ -22,7 +22,21 @@ router.post('/update', (req, res) => {
       return res.status(400).json({ error: 'Valid latitude (-90 to 90) and longitude (-180 to 180) are required.' });
     }
 
-    // Save location with family context for strict privacy boundaries
+    // 1. Query all groups the user belongs to and check granular sharing settings
+    const userGroups = db.prepare(`
+      SELECT 
+        gm.group_id,
+        COALESCE(gls.sharing_enabled, 1) as sharing_enabled,
+        COALESCE(gls.history_enabled, 1) as history_enabled
+      FROM group_members gm
+      LEFT JOIN group_location_settings gls ON gm.group_id = gls.group_id AND gm.user_id = gls.user_id
+      WHERE gm.user_id = ? AND gm.membership_status = 'ACTIVE'
+    `).all(req.user.id);
+
+    const activeSharingGroups = userGroups.filter(g => g.sharing_enabled === 1);
+    const primaryGroupId = req.user.family_id || (activeSharingGroups.length > 0 ? activeSharingGroups[0].group_id : null);
+
+    // Save location record with group and family context
     const savedLocation = locationService.saveLocation(req.user.id, {
       latitude: Number(latitude),
       longitude: Number(longitude),
@@ -31,94 +45,130 @@ router.post('/update', (req, res) => {
       battery_level,
       is_charging,
       address
-    }, req.user.family_id);
+    }, primaryGroupId);
+
+    // Tag location for all other groups where user has enabled sharing and history
+    for (const g of activeSharingGroups) {
+      if (g.history_enabled === 1 && g.group_id !== primaryGroupId) {
+        try {
+          db.prepare(`
+            INSERT INTO locations (user_id, group_id, family_id, latitude, longitude, accuracy, speed, battery_level, is_charging, address, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            req.user.id,
+            g.group_id,
+            g.group_id,
+            Number(latitude),
+            Number(longitude),
+            accuracy != null ? Number(accuracy) : null,
+            speed != null ? Math.max(0, Number(speed)) : 0,
+            battery_level != null ? Math.max(0, Math.min(100, Math.round(battery_level))) : null,
+            is_charging ? 1 : 0,
+            address || null,
+            savedLocation.timestamp
+          );
+        } catch (_) {}
+      }
+    }
 
     const newAlerts = [];
     let geofenceEvents = [];
 
-    // Check geofences and status if user belongs to a family
-    if (req.user.family_id) {
-      geofenceEvents = geofenceService.checkGeofences(
+    // Check geofences and safety triggers for all active groups
+    const alertTargetGroups = activeSharingGroups.length > 0 ? activeSharingGroups : (req.user.family_id ? [{ group_id: req.user.family_id }] : []);
+    for (const g of alertTargetGroups) {
+      const events = geofenceService.checkGeofences(
         req.user.id,
         Number(latitude),
         Number(longitude),
-        req.user.family_id
+        g.group_id
       );
+      geofenceEvents.push(...events);
 
-      // Check battery level
-      const batteryAlert = alertService.checkBatteryLevel(req.user.id, battery_level, req.user.family_id);
-      if (batteryAlert) newAlerts.push(batteryAlert);
+      const batteryAlert = alertService.checkBatteryLevel(req.user.id, battery_level, g.group_id);
+      if (batteryAlert) newAlerts.push({ ...batteryAlert, groupId: g.group_id });
 
-      // Check speed
-      const speedAlert = alertService.checkSpeed(req.user.id, speed, req.user.family_id);
-      if (speedAlert) newAlerts.push(speedAlert);
+      const speedAlert = alertService.checkSpeed(req.user.id, speed, g.group_id);
+      if (speedAlert) newAlerts.push({ ...speedAlert, groupId: g.group_id });
+    }
 
-      // Emit real-time location update to family room via Socket.IO
-      const io = req.app.get('io');
-      if (io) {
-        const locationPayload = {
+    // Broadcast location update via Socket.IO strictly to authorized groups
+    const io = req.app.get('io');
+    if (io) {
+      const locationPayload = {
+        userId: req.user.id,
+        user_id: req.user.id,
+        userName: req.user.name,
+        user_name: req.user.name,
+        avatarColor: req.user.avatar_color,
+        avatar_color: req.user.avatar_color,
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        accuracy: accuracy != null ? Number(accuracy) : null,
+        speed: speed != null ? Number(speed) : 0,
+        batteryLevel: battery_level != null ? Number(battery_level) : null,
+        battery_level: battery_level != null ? Number(battery_level) : null,
+        isCharging: is_charging ? 1 : 0,
+        is_charging: is_charging ? 1 : 0,
+        address: address || null,
+        timestamp: savedLocation.timestamp
+      };
+
+      // Emit ONLY to groups where user has explicitly enabled sharing
+      for (const g of activeSharingGroups) {
+        io.to(`group:${g.group_id}`).emit('location:update', {
+          ...locationPayload,
+          groupId: g.group_id,
+          group_id: g.group_id
+        });
+      }
+
+      // Backward compatibility: emit to family room if sharing is allowed
+      if (req.user.family_id) {
+        const familyPref = userGroups.find(g => g.group_id === req.user.family_id);
+        if (!familyPref || familyPref.sharing_enabled === 1) {
+          io.to(`family:${req.user.family_id}`).emit('location:update', locationPayload);
+        }
+      }
+
+      // Emit alerts to groups
+      for (const alert of newAlerts) {
+        const targetRoom = alert.groupId ? `group:${alert.groupId}` : `family:${req.user.family_id}`;
+        io.to(targetRoom).emit('alert:new', {
+          ...alert,
+          userId: req.user.id,
+          userName: req.user.name
+        });
+        if (req.user.family_id && targetRoom !== `family:${req.user.family_id}`) {
+          io.to(`family:${req.user.family_id}`).emit('alert:new', {
+            ...alert,
+            userId: req.user.id,
+            userName: req.user.name
+          });
+        }
+      }
+
+      // Emit geofence events as alerts
+      for (const event of geofenceEvents) {
+        const alertType = event.event_type === 'enter' ? 'geofence_enter' : 'geofence_exit';
+        io.to(`family:${req.user.family_id}`).emit('alert:new', {
+          type: alertType,
+          familyId: req.user.family_id,
+          family_id: req.user.family_id,
           userId: req.user.id,
           user_id: req.user.id,
           userName: req.user.name,
           user_name: req.user.name,
-          avatarColor: req.user.avatar_color,
-          avatar_color: req.user.avatar_color,
-          latitude: Number(latitude),
-          longitude: Number(longitude),
-          accuracy: accuracy != null ? Number(accuracy) : null,
-          speed: speed != null ? Number(speed) : 0,
-          batteryLevel: battery_level != null ? Number(battery_level) : null,
-          battery_level: battery_level != null ? Number(battery_level) : null,
-          isCharging: is_charging ? 1 : 0,
-          is_charging: is_charging ? 1 : 0,
-          address: address || null,
-          timestamp: savedLocation.timestamp
-        };
-
-        io.to(`family:${req.user.family_id}`).emit('location:update', locationPayload);
-
-        // Emit alerts
-        for (const alert of newAlerts) {
-          io.to(`family:${req.user.family_id}`).emit('alert:new', {
-            id: alert.id,
-            familyId: req.user.family_id,
-            family_id: req.user.family_id,
-            userId: req.user.id,
-            user_id: req.user.id,
-            userName: req.user.name,
-            user_name: req.user.name,
-            type: alert.type,
-            title: alert.title,
-            message: alert.message,
-            isRead: 0,
-            is_read: 0,
-            createdAt: alert.created_at,
-            created_at: alert.created_at
-          });
-        }
-
-        // Emit geofence events as alerts
-        for (const event of geofenceEvents) {
-          const alertType = event.event_type === 'enter' ? 'geofence_enter' : 'geofence_exit';
-          io.to(`family:${req.user.family_id}`).emit('alert:new', {
-            type: alertType,
-            familyId: req.user.family_id,
-            family_id: req.user.family_id,
-            userId: req.user.id,
-            user_id: req.user.id,
-            userName: req.user.name,
-            user_name: req.user.name,
-            geofenceName: event.geofence_name,
-            geofence_name: event.geofence_name,
-            eventType: event.event_type,
-            event_type: event.event_type,
-            title: event.event_type === 'enter' ? `${req.user.name} entered ${event.geofence_name}` : `${req.user.name} left ${event.geofence_name}`,
-            message: `${req.user.name} has ${event.event_type === 'enter' ? 'entered' : 'exited'} ${event.geofence_name}`,
-            timestamp: event.timestamp,
-            createdAt: event.timestamp,
-            created_at: event.timestamp
-          });
-        }
+          geofenceName: event.geofence_name,
+          geofence_name: event.geofence_name,
+          eventType: event.event_type,
+          event_type: event.event_type,
+          title: event.event_type === 'enter' ? `${req.user.name} entered ${event.geofence_name}` : `${req.user.name} left ${event.geofence_name}`,
+          message: `${req.user.name} has ${event.event_type === 'enter' ? 'entered' : 'exited'} ${event.geofence_name}`,
+          timestamp: event.timestamp,
+          createdAt: event.timestamp,
+          createdAt: event.timestamp
+        });
       }
     }
 

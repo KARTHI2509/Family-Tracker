@@ -178,6 +178,49 @@ db.exec(`
     FOREIGN KEY (admin_id) REFERENCES users(id),
     FOREIGN KEY (target_user_id) REFERENCES users(id)
   );
+
+  -- Multi-Group Architecture Tables (V3)
+  CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    group_type TEXT DEFAULT 'FAMILY',
+    avatar_color TEXT DEFAULT '#4F46E5',
+    icon TEXT DEFAULT 'Users',
+    created_by INTEGER NOT NULL,
+    invite_code TEXT UNIQUE NOT NULL,
+    invite_expiry DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'active',
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    role TEXT DEFAULT 'MEMBER',
+    membership_status TEXT DEFAULT 'ACTIVE',
+    joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(group_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS group_location_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    sharing_enabled INTEGER DEFAULT 1,
+    history_enabled INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(group_id, user_id)
+  );
 `);
 
 // Safe Migrations for existing databases
@@ -235,6 +278,65 @@ try {
   console.warn('Migration note (locations):', migErr.message);
 }
 
+// Safe Migration: V3 Multi-Group Architecture Data Migration
+try {
+  const locCols = db.prepare("PRAGMA table_info('locations')").all();
+  if (!locCols.some(c => c.name === 'group_id')) {
+    db.exec("ALTER TABLE locations ADD COLUMN group_id INTEGER REFERENCES groups(id)");
+  }
+
+  const geoCols = db.prepare("PRAGMA table_info('geofences')").all();
+  if (!geoCols.some(c => c.name === 'group_id')) {
+    db.exec("ALTER TABLE geofences ADD COLUMN group_id INTEGER REFERENCES groups(id)");
+  }
+
+  const alertCols = db.prepare("PRAGMA table_info('alerts')").all();
+  if (!alertCols.some(c => c.name === 'group_id')) {
+    db.exec("ALTER TABLE alerts ADD COLUMN group_id INTEGER REFERENCES groups(id)");
+  }
+
+  const journeyCols = db.prepare("PRAGMA table_info('journeys')").all();
+  if (!journeyCols.some(c => c.name === 'group_id')) {
+    db.exec("ALTER TABLE journeys ADD COLUMN group_id INTEGER REFERENCES groups(id)");
+  }
+
+  const sosCols = db.prepare("PRAGMA table_info('sos_events')").all();
+  if (!sosCols.some(c => c.name === 'group_ids')) {
+    db.exec("ALTER TABLE sos_events ADD COLUMN group_ids TEXT");
+  }
+
+  // Atomically migrate existing families to groups and populate memberships
+  db.transaction(() => {
+    db.exec(`
+      INSERT OR IGNORE INTO groups (id, name, group_type, avatar_color, icon, created_by, invite_code, created_at, status)
+      SELECT id, name, 'FAMILY', '#4F46E5', 'Users', created_by, invite_code, created_at, 'active'
+      FROM families;
+
+      INSERT OR IGNORE INTO group_members (group_id, user_id, role, membership_status, joined_at)
+      SELECT 
+        u.family_id,
+        u.id,
+        CASE WHEN u.id = f.created_by THEN 'OWNER' ELSE 'MEMBER' END,
+        'ACTIVE',
+        u.created_at
+      FROM users u
+      JOIN families f ON u.family_id = f.id
+      WHERE u.family_id IS NOT NULL;
+
+      INSERT OR IGNORE INTO group_location_settings (group_id, user_id, sharing_enabled, history_enabled, created_at)
+      SELECT group_id, user_id, 1, 1, joined_at
+      FROM group_members;
+
+      UPDATE locations SET group_id = family_id WHERE group_id IS NULL AND family_id IS NOT NULL;
+      UPDATE geofences SET group_id = family_id WHERE group_id IS NULL AND family_id IS NOT NULL;
+      UPDATE alerts SET group_id = family_id WHERE group_id IS NULL AND family_id IS NOT NULL;
+      UPDATE journeys SET group_id = family_id WHERE group_id IS NULL AND family_id IS NOT NULL;
+    `);
+  })();
+} catch (v3MigErr) {
+  console.warn('Migration note (V3 Multi-Group):', v3MigErr.message);
+}
+
 // Performance indexes
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_locations_user_timestamp ON locations(user_id, timestamp);
@@ -249,6 +351,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id, timestamp);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, timestamp);
   CREATE INDEX IF NOT EXISTS idx_emergency_grants_admin ON emergency_access_grants(admin_id, expires_at);
+  
+  -- V3 Multi-Group Indexes
+  CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
+  CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
+  CREATE INDEX IF NOT EXISTS idx_group_location_settings ON group_location_settings(group_id, user_id);
+  CREATE INDEX IF NOT EXISTS idx_groups_invite_code ON groups(invite_code);
+  CREATE INDEX IF NOT EXISTS idx_locations_group_timestamp ON locations(group_id, user_id, timestamp);
+  CREATE INDEX IF NOT EXISTS idx_geofences_group ON geofences(group_id);
+  CREATE INDEX IF NOT EXISTS idx_alerts_group ON alerts(group_id, created_at);
 `);
 
 console.log('Database schema ready. SQLite database at:', db.dbPath);

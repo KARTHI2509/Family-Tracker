@@ -1,8 +1,14 @@
+import { Capacitor } from '@capacitor/core';
+
 function getBaseUrl() {
   const envUrl = import.meta.env.VITE_API_URL;
   if (envUrl && envUrl.trim()) {
     const cleaned = envUrl.trim().replace(/\/+$/, '');
     return cleaned.endsWith('/api') ? cleaned : `${cleaned}/api`;
+  }
+  // When running inside native Android / iOS Capacitor app, always target the live production cloud backend
+  if (Capacitor.isNativePlatform()) {
+    return 'https://family-tracker-fidw.onrender.com/api';
   }
   if (import.meta.env.PROD && typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || !window.location.hostname.includes('localhost'))) {
     return 'https://family-tracker-fidw.onrender.com/api';

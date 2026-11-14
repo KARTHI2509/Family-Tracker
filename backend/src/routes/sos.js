@@ -11,21 +11,34 @@ router.use(authMiddleware);
 
 /**
  * GET /api/sos/active
- * Retrieve any currently active SOS events for the user's family.
+ * Retrieve any currently active SOS events for the user's groups.
  */
 router.get('/active', (req, res) => {
   try {
-    if (!req.user.family_id) {
-      return res.status(400).json({ error: 'You must be a member of a family.' });
+    // Find all groups the user belongs to
+    const myGroups = db.prepare(`
+      SELECT group_id FROM group_members WHERE user_id = ? AND membership_status = 'ACTIVE'
+    `).all(req.user.id).map(g => g.group_id);
+
+    if (myGroups.length === 0 && !req.user.family_id) {
+      return res.json({ activeSOSEvents: [], sosEvents: [] });
     }
 
+    const groupIdsToQuery = [...myGroups];
+    if (req.user.family_id && !groupIdsToQuery.includes(req.user.family_id)) {
+      groupIdsToQuery.push(req.user.family_id);
+    }
+
+    const placeholders = groupIdsToQuery.map(() => '?').join(',');
+
     const activeEvents = db.prepare(`
-      SELECT s.*, u.name as user_name, u.avatar_color, u.email
+      SELECT DISTINCT s.*, u.name as user_name, u.avatar_color, u.email
       FROM sos_events s
       JOIN users u ON s.user_id = u.id
-      WHERE s.is_active = 1 AND u.family_id = ?
+      LEFT JOIN group_members gm ON gm.user_id = u.id AND gm.membership_status = 'ACTIVE'
+      WHERE s.is_active = 1 AND (gm.group_id IN (${placeholders}) OR u.family_id IN (${placeholders}))
       ORDER BY s.triggered_at DESC
-    `).all(req.user.family_id);
+    `).all(...groupIdsToQuery, ...groupIdsToQuery);
 
     const formattedEvents = activeEvents.map(e => ({
       id: e.id,
@@ -40,7 +53,8 @@ router.get('/active', (req, res) => {
       isActive: 1,
       is_active: 1,
       triggeredAt: e.triggered_at,
-      triggered_at: e.triggered_at
+      triggered_at: e.triggered_at,
+      groupIds: e.group_ids ? JSON.parse(e.group_ids) : []
     }));
 
     res.json({ activeSOSEvents: formattedEvents, sosEvents: formattedEvents });
@@ -52,15 +66,11 @@ router.get('/active', (req, res) => {
 
 /**
  * POST /api/sos/trigger
- * Trigger an SOS event. Allows null coordinates if GPS was denied or unavailable.
+ * Trigger an SOS event. Supports multi-group broadcasting.
  */
 router.post('/trigger', (req, res) => {
   try {
-    const { latitude, longitude } = req.body;
-
-    if (!req.user.family_id) {
-      return res.status(400).json({ error: 'You must be a member of a family to trigger SOS.' });
-    }
+    const { latitude, longitude, groupIds, targetGroupIds } = req.body;
 
     // Check if there is already an active SOS for this user
     const existingActive = db.prepare(`
@@ -72,16 +82,44 @@ router.post('/trigger', (req, res) => {
       return res.status(400).json({ error: 'You already have an active SOS broadcast in progress.' });
     }
 
+    // Find all active groups the user belongs to
+    const myGroups = db.prepare(`
+      SELECT g.id, g.name
+      FROM group_members gm
+      JOIN groups g ON gm.group_id = g.id
+      WHERE gm.user_id = ? AND gm.membership_status = 'ACTIVE' AND g.status = 'active'
+    `).all(req.user.id);
+
+    if (myGroups.length === 0 && !req.user.family_id) {
+      return res.status(400).json({ error: 'You must belong to at least one group to trigger SOS.' });
+    }
+
+    // Determine target groups (allow user selection or default to all active groups)
+    let selectedGroupIds = [];
+    const requested = groupIds || targetGroupIds;
+    if (Array.isArray(requested) && requested.length > 0) {
+      const allowedSet = new Set(myGroups.map(g => g.id));
+      if (req.user.family_id) allowedSet.add(req.user.family_id);
+      selectedGroupIds = requested.filter(id => allowedSet.has(Number(id)));
+    }
+
+    if (selectedGroupIds.length === 0) {
+      selectedGroupIds = myGroups.map(g => g.id);
+      if (req.user.family_id && !selectedGroupIds.includes(req.user.family_id)) {
+        selectedGroupIds.push(req.user.family_id);
+      }
+    }
+
     const hasValidCoords = isValidCoordinate(latitude, longitude);
     const cleanLat = hasValidCoords ? Number(latitude) : null;
     const cleanLon = hasValidCoords ? Number(longitude) : null;
     const nowIso = new Date().toISOString();
 
     const sosStmt = db.prepare(`
-      INSERT INTO sos_events (user_id, latitude, longitude, is_active, triggered_at)
-      VALUES (?, ?, ?, 1, ?)
+      INSERT INTO sos_events (user_id, latitude, longitude, is_active, group_ids, triggered_at)
+      VALUES (?, ?, ?, 1, ?, ?)
     `);
-    const sosResult = sosStmt.run(req.user.id, cleanLat, cleanLon, nowIso);
+    const sosResult = sosStmt.run(req.user.id, cleanLat, cleanLon, JSON.stringify(selectedGroupIds), nowIso);
 
     const sosPayload = {
       id: sosResult.lastInsertRowid,
@@ -96,43 +134,43 @@ router.post('/trigger', (req, res) => {
       isActive: 1,
       is_active: 1,
       triggeredAt: nowIso,
-      triggered_at: nowIso
+      triggered_at: nowIso,
+      groupIds: selectedGroupIds
     };
 
-    // Create persistent alert
     const locationNote = hasValidCoords
       ? `Location: ${cleanLat.toFixed(4)}, ${cleanLon.toFixed(4)}`
       : 'Location unavailable';
 
-    const alert = alertService.createAlert(
-      req.user.family_id,
-      req.user.id,
-      'sos',
-      `🚨 EMERGENCY: SOS from ${req.user.name}!`,
-      `${req.user.name} has triggered an emergency SOS! ${locationNote}.`,
-      JSON.stringify({ latitude: cleanLat, longitude: cleanLon, sos_id: sosResult.lastInsertRowid })
-    );
-
-    // Broadcast to family room
+    // Broadcast only to selected groups
     const io = req.app.get('io');
-    if (io) {
-      io.to(`family:${req.user.family_id}`).emit('sos:triggered', sosPayload);
-      io.to(`family:${req.user.family_id}`).emit('alert:new', {
-        id: alert.id,
-        familyId: req.user.family_id,
-        family_id: req.user.family_id,
-        userId: req.user.id,
-        user_id: req.user.id,
-        userName: req.user.name,
-        user_name: req.user.name,
-        type: 'sos',
-        title: alert.title,
-        message: alert.message,
-        isRead: 0,
-        is_read: 0,
-        createdAt: alert.created_at,
-        created_at: alert.created_at
-      });
+    for (const gid of selectedGroupIds) {
+      const alert = alertService.createAlert(
+        gid,
+        req.user.id,
+        'sos',
+        `🚨 EMERGENCY: SOS from ${req.user.name}!`,
+        `${req.user.name} has triggered an emergency SOS! ${locationNote}.`,
+        JSON.stringify({ latitude: cleanLat, longitude: cleanLon, sos_id: sosResult.lastInsertRowid, group_id: gid })
+      );
+
+      if (io) {
+        io.to(`group:${gid}`).emit('sos:triggered', { ...sosPayload, groupId: gid });
+        io.to(`group:${gid}`).emit('alert:new', {
+          id: alert.id,
+          groupId: gid,
+          userId: req.user.id,
+          userName: req.user.name,
+          type: 'sos',
+          title: alert.title,
+          message: alert.message
+        });
+
+        if (req.user.family_id && gid === req.user.family_id) {
+          io.to(`family:${req.user.family_id}`).emit('sos:triggered', sosPayload);
+          io.to(`family:${req.user.family_id}`).emit('alert:new', alert);
+        }
+      }
     }
 
     res.status(201).json({
@@ -151,10 +189,6 @@ router.post('/trigger', (req, res) => {
  */
 router.post('/cancel', (req, res) => {
   try {
-    if (!req.user.family_id) {
-      return res.status(400).json({ error: 'You must be a member of a family.' });
-    }
-
     const activeSOS = db.prepare(`
       SELECT * FROM sos_events
       WHERE user_id = ? AND is_active = 1
@@ -182,9 +216,20 @@ router.post('/cancel', (req, res) => {
       cancelled_at: nowIso
     };
 
+    // Find all target groups of this SOS
+    let targetGids = [];
+    if (activeSOS.group_ids) {
+      try { targetGids = JSON.parse(activeSOS.group_ids); } catch (_) {}
+    }
+
     const io = req.app.get('io');
     if (io) {
-      io.to(`family:${req.user.family_id}`).emit('sos:cancelled', cancelPayload);
+      for (const gid of targetGids) {
+        io.to(`group:${gid}`).emit('sos:cancelled', { ...cancelPayload, groupId: gid });
+      }
+      if (req.user.family_id) {
+        io.to(`family:${req.user.family_id}`).emit('sos:cancelled', cancelPayload);
+      }
     }
 
     res.json({

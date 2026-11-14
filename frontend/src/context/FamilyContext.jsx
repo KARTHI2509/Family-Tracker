@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { io } from 'socket.io-client';
 import api from '../services/api';
 import { useAuth } from './AuthContext';
@@ -24,6 +25,17 @@ export function FamilyProvider({ children }) {
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [toasts, setToasts] = useState([]);
+
+  // Multi-Group Architecture State (V3)
+  const [groups, setGroups] = useState([]);
+  const [activeGroupId, setActiveGroupId] = useState(() => {
+    const saved = localStorage.getItem('ft_active_group_id');
+    return saved ? Number(saved) : null;
+  });
+  const [isAllGroupsView, setIsAllGroupsView] = useState(false);
+  const [allGroupsData, setAllGroupsData] = useState({ members: [], groups: [] });
+
+  const activeGroup = groups.find(g => g.id === activeGroupId) || groups[0] || null;
 
   // Location tracking state and consent
   const [isTrackingEnabled, setIsTrackingEnabled] = useState(() => {
@@ -57,6 +69,163 @@ export function FamilyProvider({ children }) {
   const removeToast = useCallback((id) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
+
+  // Multi-Group Architecture API Methods (V3)
+  const fetchGroups = useCallback(async () => {
+    try {
+      const data = await api.get('/groups');
+      const list = data.groups || [];
+      setGroups(list);
+      if (list.length > 0) {
+        setActiveGroupId(prev => {
+          if (prev && list.some(g => g.id === prev)) return prev;
+          const fallback = list[0].id;
+          localStorage.setItem('ft_active_group_id', fallback);
+          return fallback;
+        });
+      }
+      return list;
+    } catch (err) {
+      console.error('Failed to fetch groups:', err);
+      return [];
+    }
+  }, []);
+
+  const fetchGroupMembers = useCallback(async (groupId) => {
+    if (!groupId) return [];
+    try {
+      const data = await api.get(`/groups/${groupId}/members`);
+      setMembers(data.members || []);
+      return data.members || [];
+    } catch (err) {
+      console.error('Failed to fetch group members:', err);
+      return [];
+    }
+  }, []);
+
+  const fetchGroupGeofences = useCallback(async (groupId) => {
+    if (!groupId) return [];
+    try {
+      const data = await api.get(`/groups/${groupId}/geofences`);
+      setGeofences(data.geofences || []);
+      return data.geofences || [];
+    } catch (err) {
+      console.error('Failed to fetch group geofences:', err);
+      return [];
+    }
+  }, []);
+
+  const fetchAllGroupsMap = useCallback(async () => {
+    try {
+      const data = await api.get('/groups/all-map');
+      setAllGroupsData(data || { members: [], groups: [] });
+      return data;
+    } catch (err) {
+      console.error('Failed to fetch all groups map:', err);
+      return { members: [], groups: [] };
+    }
+  }, []);
+
+  const switchActiveGroup = async (targetId) => {
+    if (targetId === 'all') {
+      setIsAllGroupsView(true);
+      await fetchAllGroupsMap();
+      return;
+    }
+    const numId = Number(targetId);
+    setIsAllGroupsView(false);
+    setActiveGroupId(numId);
+    localStorage.setItem('ft_active_group_id', numId);
+    await Promise.all([
+      fetchGroupMembers(numId),
+      fetchGroupGeofences(numId),
+      fetchActiveSOS()
+    ]);
+  };
+
+  const createGroup = async (groupData) => {
+    const data = await api.post('/groups/create', groupData);
+    await fetchGroups();
+    if (data.group) {
+      await switchActiveGroup(data.group.id);
+    }
+    addToast('success', 'Group Created!', `"${groupData.name}" has been created.`);
+    return data;
+  };
+
+  const joinGroup = async (inviteCode, sharingOptions = {}) => {
+    const data = await api.post('/groups/join', { inviteCode, ...sharingOptions });
+    await fetchGroups();
+    if (data.group) {
+      await switchActiveGroup(data.group.id);
+    }
+    addToast('success', 'Joined Group!', `You are now a member of "${data.group?.name}".`);
+    return data;
+  };
+
+  const validateGroupInvite = async (inviteCode) => {
+    return await api.post('/groups/validate-invite', { inviteCode });
+  };
+
+  const updateGroupLocationSharing = async (groupId, settings) => {
+    const data = await api.put(`/groups/${groupId}/location-settings`, settings);
+    await fetchGroups();
+    addToast('info', 'Sharing Updated', data.message || 'Preferences saved.');
+    return data;
+  };
+
+  const leaveGroup = async (groupId, transferOwnerTo = null) => {
+    const data = await api.post(`/groups/${groupId}/leave`, { transferOwnerTo });
+    const remaining = await fetchGroups();
+    if (remaining.length > 0) {
+      await switchActiveGroup(remaining[0].id);
+    } else {
+      setActiveGroupId(null);
+      setMembers([]);
+    }
+    addToast('info', 'Left Group', 'You have left the group.');
+    return data;
+  };
+
+  const deleteGroup = async (groupId) => {
+    const data = await api.delete(`/groups/${groupId}`);
+    const remaining = await fetchGroups();
+    if (remaining.length > 0) {
+      await switchActiveGroup(remaining[0].id);
+    } else {
+      setActiveGroupId(null);
+      setMembers([]);
+    }
+    addToast('info', 'Group Deleted', 'The group has been deleted.');
+    return data;
+  };
+
+  const updateMemberRole = async (groupId, userId, role) => {
+    const data = await api.put(`/groups/${groupId}/members/${userId}/role`, { role });
+    await fetchGroupMembers(groupId);
+    addToast('success', 'Role Updated', data.message);
+    return data;
+  };
+
+  const removeMember = async (groupId, userId) => {
+    const data = await api.delete(`/groups/${groupId}/members/${userId}`);
+    await fetchGroupMembers(groupId);
+    addToast('info', 'Member Removed', 'Member was removed from group.');
+    return data;
+  };
+
+  const transferGroupOwner = async (groupId, newOwnerId) => {
+    const data = await api.post(`/groups/${groupId}/transfer-owner`, { newOwnerId });
+    await fetchGroups();
+    await fetchGroupMembers(groupId);
+    addToast('success', 'Ownership Transferred', data.message);
+    return data;
+  };
+
+  const fetchGroupHistory = async (groupId, memberId, hours = 24) => {
+    const data = await api.get(`/groups/${groupId}/history/${memberId}?hours=${hours}`);
+    return data.history || [];
+  };
 
   // Fetch family members
   const fetchMembers = useCallback(async () => {
@@ -464,7 +633,7 @@ export function FamilyProvider({ children }) {
     if (!token) return;
 
     let defaultSocket = window.location.origin;
-    if (import.meta.env.PROD && typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || !window.location.hostname.includes('localhost'))) {
+    if (Capacitor.isNativePlatform() || (import.meta.env.PROD && typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || !window.location.hostname.includes('localhost')))) {
       defaultSocket = 'https://family-tracker-fidw.onrender.com';
     }
     const rawSocket = import.meta.env.VITE_SOCKET_URL || defaultSocket;
@@ -579,9 +748,42 @@ export function FamilyProvider({ children }) {
     });
 
     // Member joined
-    s.on('member:joined', () => {
+    s.on('member:joined', (data) => {
       fetchMembers();
       fetchFamilyDetails();
+      fetchGroups();
+      if (data?.groupId && data.groupId === activeGroupId) {
+        fetchGroupMembers(data.groupId);
+      }
+    });
+
+    // Group-specific updates
+    s.on('group:updated', () => {
+      fetchGroups();
+    });
+
+    s.on('member:sharing_updated', (data) => {
+      if (data?.groupId && data.groupId === activeGroupId) {
+        fetchGroupMembers(data.groupId);
+      }
+    });
+
+    s.on('member:left', (data) => {
+      fetchGroups();
+      if (data?.groupId && data.groupId === activeGroupId) {
+        fetchGroupMembers(data.groupId);
+      }
+    });
+
+    s.on('member:removed', (data) => {
+      fetchGroups();
+      if (data?.groupId && data.groupId === activeGroupId) {
+        fetchGroupMembers(data.groupId);
+      }
+    });
+
+    s.on('group:deleted', () => {
+      fetchGroups();
     });
 
     // Family owner changed
@@ -629,17 +831,22 @@ export function FamilyProvider({ children }) {
 
   // Initial data loading on mount or login
   useEffect(() => {
-    if (user && token && user.family_id) {
-      fetchMembers();
+    if (user && token) {
+      fetchGroups();
       fetchAlerts();
-      fetchGeofences();
       fetchActiveSOS();
       fetchActiveJourneys();
-      fetchFamilyDetails();
+
+      if (user.family_id) {
+        fetchMembers();
+        fetchGeofences();
+        fetchFamilyDetails();
+      }
     }
-  }, [user, token, fetchMembers, fetchAlerts, fetchGeofences, fetchActiveSOS, fetchActiveJourneys, fetchFamilyDetails]);
+  }, [user, token, fetchGroups, fetchMembers, fetchAlerts, fetchGeofences, fetchActiveSOS, fetchActiveJourneys, fetchFamilyDetails]);
 
   const value = {
+    // Legacy Family values
     members,
     alerts,
     geofences,
@@ -685,6 +892,29 @@ export function FamilyProvider({ children }) {
     markAllAlertsRead,
     fetchLocationHistory,
     lastLocation: lastLocationRef.current,
+
+    // Multi-Group Architecture V3
+    groups,
+    activeGroupId,
+    activeGroup,
+    isAllGroupsView,
+    setIsAllGroupsView,
+    allGroupsData,
+    fetchGroups,
+    fetchGroupMembers,
+    fetchGroupGeofences,
+    switchActiveGroup,
+    fetchAllGroupsMap,
+    createGroup,
+    joinGroup,
+    validateGroupInvite,
+    updateGroupLocationSharing,
+    leaveGroup,
+    deleteGroup,
+    updateMemberRole,
+    removeMember,
+    transferGroupOwner,
+    fetchGroupHistory,
   };
 
   return (

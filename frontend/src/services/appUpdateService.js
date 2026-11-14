@@ -49,3 +49,4 @@ class AppUpdateService {
 
 export const appUpdateService = new AppUpdateService();
 export default appUpdateService;
+

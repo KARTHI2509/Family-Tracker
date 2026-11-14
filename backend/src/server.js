@@ -24,6 +24,7 @@ const alertRoutes = require('./routes/alerts');
 const adminRoutes = require('./routes/admin');
 const journeyRoutes = require('./routes/journey');
 const appUpdateRoutes = require('./routes/appUpdate');
+const groupsRoutes = require('./routes/groups');
 const locationService = require('./services/locationService');
 
 const app = express();
@@ -127,6 +128,27 @@ app.set('migrateUserFamilySockets', (userId, oldFamilyId, newFamilyId) => {
   }
 });
 
+// Multi-device group room helpers
+app.set('joinUserGroupSockets', (userId, groupId) => {
+  const userSession = onlineUsers.get(userId);
+  if (userSession && userSession.socketIds) {
+    userSession.socketIds.forEach(sockId => {
+      const sock = io.sockets.sockets.get(sockId);
+      if (sock) sock.join(`group:${groupId}`);
+    });
+  }
+});
+
+app.set('leaveUserGroupSockets', (userId, groupId) => {
+  const userSession = onlineUsers.get(userId);
+  if (userSession && userSession.socketIds) {
+    userSession.socketIds.forEach(sockId => {
+      const sock = io.sockets.sockets.get(sockId);
+      if (sock) sock.leave(`group:${groupId}`);
+    });
+  }
+});
+
 // Socket.IO authentication middleware
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
@@ -154,111 +176,154 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const user = socket.user;
 
+  // Retrieve all active groups this user belongs to
+  const userGroups = db.prepare(`
+    SELECT group_id FROM group_members WHERE user_id = ? AND membership_status = 'ACTIVE'
+  `).all(user.id);
+
+  // Join all group rooms
+  userGroups.forEach(g => {
+    socket.join(`group:${g.group_id}`);
+  });
+
+  // Always join personal user room
+  socket.join(`user:${user.id}`);
+
+  // Backward compatibility: join family room if set
   if (user.family_id) {
-    const familyRoom = `family:${user.family_id}`;
-    socket.join(familyRoom);
-
-    // Track user session across multiple devices
-    let userSession = onlineUsers.get(user.id);
-    const wasAlreadyOnline = userSession && userSession.socketIds.size > 0;
-
-    if (!userSession) {
-      userSession = {
-        socketIds: new Set(),
-        familyId: user.family_id,
-        lastSeen: Date.now(),
-        name: user.name,
-        avatarColor: user.avatar_color
-      };
-      onlineUsers.set(user.id, userSession);
-    }
-
-    userSession.socketIds.add(socket.id);
-    userSession.lastSeen = Date.now();
-
-    // If newly online, broadcast to family
-    if (!wasAlreadyOnline) {
-      io.to(familyRoom).emit('member:online', {
-        userId: user.id,
-        user_id: user.id,
-        userName: user.name,
-        user_name: user.name,
-        avatarColor: user.avatar_color,
-        avatar_color: user.avatar_color,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Send list of currently online family members to the connecting socket
-    const onlineFamilyMembers = [];
-    for (const [uid, session] of onlineUsers.entries()) {
-      if (session.familyId === user.family_id && session.socketIds.size > 0) {
-        onlineFamilyMembers.push(uid);
-      }
-    }
-    socket.emit('online:members', onlineFamilyMembers);
+    socket.join(`family:${user.family_id}`);
   }
+
+  // Multi-device session tracking
+  let userSession = onlineUsers.get(user.id);
+  const wasAlreadyOnline = userSession && userSession.socketIds.size > 0;
+
+  if (!userSession) {
+    userSession = {
+      socketIds: new Set(),
+      familyId: user.family_id,
+      groupIds: new Set(userGroups.map(g => g.group_id)),
+      lastSeen: Date.now(),
+      name: user.name,
+      avatarColor: user.avatar_color
+    };
+    onlineUsers.set(user.id, userSession);
+  } else {
+    userSession.groupIds = new Set(userGroups.map(g => g.group_id));
+  }
+
+  userSession.socketIds.add(socket.id);
+  userSession.lastSeen = Date.now();
+
+  const onlinePayload = {
+    userId: user.id,
+    user_id: user.id,
+    userName: user.name,
+    user_name: user.name,
+    avatarColor: user.avatar_color,
+    avatar_color: user.avatar_color,
+    timestamp: new Date().toISOString()
+  };
+
+  // Broadcast online presence to all groups if newly online
+  if (!wasAlreadyOnline) {
+    userGroups.forEach(g => {
+      io.to(`group:${g.group_id}`).emit('member:online', {
+        ...onlinePayload,
+        groupId: g.group_id
+      });
+    });
+
+    if (user.family_id) {
+      io.to(`family:${user.family_id}`).emit('member:online', onlinePayload);
+    }
+  }
+
+  // Send initial list of online members across all user's groups
+  const onlineMembers = [];
+  for (const [uid, session] of onlineUsers.entries()) {
+    if (session.socketIds && session.socketIds.size > 0) {
+      onlineMembers.push(uid);
+    }
+  }
+  socket.emit('online:members', onlineMembers);
 
   // Handle client-emitted real-time location update via socket
   socket.on('location:update', (locationData) => {
-    if (user.family_id) {
-      const userSession = onlineUsers.get(user.id);
-      if (userSession) {
-        userSession.lastSeen = Date.now();
+    const session = onlineUsers.get(user.id);
+    if (session) {
+      session.lastSeen = Date.now();
+    }
+
+    // Query sharing settings for all groups
+    const sharingSettings = db.prepare(`
+      SELECT gm.group_id, COALESCE(gls.sharing_enabled, 1) as sharing_enabled
+      FROM group_members gm
+      LEFT JOIN group_location_settings gls ON gm.group_id = gls.group_id AND gm.user_id = gls.user_id
+      WHERE gm.user_id = ? AND gm.membership_status = 'ACTIVE'
+    `).all(user.id);
+
+    const payload = {
+      userId: user.id,
+      user_id: user.id,
+      userName: user.name,
+      user_name: user.name,
+      avatarColor: user.avatar_color,
+      avatar_color: user.avatar_color,
+      ...locationData,
+      timestamp: new Date().toISOString()
+    };
+
+    // Broadcast only to groups where user has enabled sharing
+    sharingSettings.forEach(s => {
+      if (s.sharing_enabled === 1) {
+        socket.to(`group:${s.group_id}`).emit('location:update', {
+          ...payload,
+          groupId: s.group_id,
+          group_id: s.group_id
+        });
       }
+    });
 
-      const payload = {
-        userId: user.id,
-        user_id: user.id,
-        userName: user.name,
-        user_name: user.name,
-        avatarColor: user.avatar_color,
-        avatar_color: user.avatar_color,
-        ...locationData,
-        timestamp: new Date().toISOString()
-      };
-
-      // Broadcast to other family members in room
-      socket.to(`family:${user.family_id}`).emit('location:update', payload);
+    // Backward compatibility: emit to family room if sharing enabled
+    if (user.family_id) {
+      const famPref = sharingSettings.find(s => s.group_id === user.family_id);
+      if (!famPref || famPref.sharing_enabled === 1) {
+        socket.to(`family:${user.family_id}`).emit('location:update', payload);
+      }
     }
   });
 
   // Handle disconnect
   socket.on('disconnect', () => {
-    const userSession = onlineUsers.get(user.id);
-    if (!userSession) return;
+    const session = onlineUsers.get(user.id);
+    if (!session) return;
 
-    userSession.socketIds.delete(socket.id);
+    session.socketIds.delete(socket.id);
 
     // Only mark user offline if NO remaining active devices/tabs
-    if (userSession.socketIds.size === 0) {
+    if (session.socketIds.size === 0) {
       onlineUsers.delete(user.id);
 
-      if (user.family_id) {
-        const familyRoom = `family:${user.family_id}`;
-        io.to(familyRoom).emit('member:offline', {
-          userId: user.id,
-          user_id: user.id,
-          userName: user.name,
-          user_name: user.name,
-          timestamp: new Date().toISOString()
-        });
+      const offlinePayload = {
+        userId: user.id,
+        user_id: user.id,
+        userName: user.name,
+        user_name: user.name,
+        timestamp: new Date().toISOString()
+      };
 
-        // Ghost mode check after threshold
-        setTimeout(() => {
-          if (!onlineUsers.has(user.id)) {
-            const ghostAlert = alertService.detectGhostMode(user.id, user.family_id);
-            if (ghostAlert) {
-              io.to(familyRoom).emit('alert:new', {
-                ...ghostAlert,
-                userId: user.id,
-                user_id: user.id,
-                userName: user.name,
-                user_name: user.name
-              });
-            }
-          }
-        }, alertService.GHOST_MODE_THRESHOLD_MINUTES * 60 * 1000);
+      if (session.groupIds) {
+        for (const gid of session.groupIds) {
+          io.to(`group:${gid}`).emit('member:offline', {
+            ...offlinePayload,
+            groupId: gid
+          });
+        }
+      }
+
+      if (session.familyId) {
+        io.to(`family:${session.familyId}`).emit('member:offline', offlinePayload);
       }
     }
   });
@@ -272,6 +337,7 @@ app.use('/api', apiLimiter);
 // Mount API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/family', familyRoutes);
+app.use('/api/groups', groupsRoutes);
 app.use('/api/location', locationRoutes);
 app.use('/api/geofence', geofenceRoutes);
 app.use('/api/sos', sosRoutes);

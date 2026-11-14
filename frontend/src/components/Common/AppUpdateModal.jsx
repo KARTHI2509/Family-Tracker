@@ -210,3 +210,4 @@ export default function AppUpdateModal({ isOpen, onClose, updateData }) {
     </div>
   );
 }
+

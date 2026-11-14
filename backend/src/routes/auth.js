@@ -127,11 +127,24 @@ router.post('/login', (req, res) => {
       safeUser.family_name = family.name;
     }
 
+    // Attach active groups
+    const userGroups = db.prepare(`
+      SELECT g.id, g.name, g.group_type, g.avatar_color, g.icon, gm.role,
+             COALESCE(gls.sharing_enabled, 1) as sharing_enabled
+      FROM group_members gm
+      JOIN groups g ON gm.group_id = g.id
+      LEFT JOIN group_location_settings gls ON gm.group_id = gls.group_id AND gm.user_id = gls.user_id
+      WHERE gm.user_id = ? AND gm.membership_status = 'ACTIVE' AND g.status = 'active'
+      ORDER BY gm.joined_at ASC
+    `).all(user.id);
+    safeUser.groups = userGroups;
+
     res.json({
       message: 'Logged in successfully.',
       token,
       user: safeUser,
-      family
+      family,
+      groups: userGroups
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -161,9 +174,22 @@ router.get('/me', authMiddleware, (req, res) => {
       safeUser.family_name = family.name;
     }
 
+    // Attach active groups
+    const userGroups = db.prepare(`
+      SELECT g.id, g.name, g.group_type, g.avatar_color, g.icon, gm.role,
+             COALESCE(gls.sharing_enabled, 1) as sharing_enabled
+      FROM group_members gm
+      JOIN groups g ON gm.group_id = g.id
+      LEFT JOIN group_location_settings gls ON gm.group_id = gls.group_id AND gm.user_id = gls.user_id
+      WHERE gm.user_id = ? AND gm.membership_status = 'ACTIVE' AND g.status = 'active'
+      ORDER BY gm.joined_at ASC
+    `).all(user.id);
+    safeUser.groups = userGroups;
+
     res.json({
       user: safeUser,
-      family
+      family,
+      groups: userGroups
     });
   } catch (err) {
     console.error('Get me error:', err);
