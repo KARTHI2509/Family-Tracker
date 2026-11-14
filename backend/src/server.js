@@ -11,6 +11,7 @@ const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 
 const db = require('./config/database');
+const mongoSync = require('./config/mongoSync');
 const alertService = require('./services/alertService');
 
 // Import routes
@@ -252,6 +253,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     database: 'connected',
+    mongo: mongoSync.getMongoStatus(),
     version: '2.0.0',
     timestamp: new Date().toISOString(),
     onlineUsers: onlineUsers.size,
@@ -342,10 +344,11 @@ app.use((err, req, res, next) => {
 // Start server if executed directly
 const PORT = process.env.PORT || 3001;
 if (require.main === module) {
-  server.listen(PORT, () => {
+  server.listen(PORT, async () => {
     console.log(`🚀 Family Tracker server running on port ${PORT}`);
     console.log(`📡 Socket.IO ready for connections`);
-    console.log(`🗄️  Database: ${process.env.DB_PATH || './data/familytracker.db'}`);
+    console.log(`🗄️  Database: ${db.dbPath || process.env.DB_PATH || './data/familytracker.db'}`);
+    await mongoSync.startMongoSync(db);
   });
 }
 
