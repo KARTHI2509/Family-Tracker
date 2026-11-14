@@ -1,0 +1,237 @@
+import React, { useState } from 'react';
+import Header from '../Common/Header';
+import Toast from '../Common/Toast';
+import LiveMap from '../Map/LiveMap';
+import RouteReplayControls from '../Map/RouteReplay';
+import GeofenceDrawer from '../Map/GeofenceDrawer';
+import FamilyPanel from './FamilyPanel';
+import AlertsPanel from './AlertsPanel';
+import LocationHistory from './LocationHistory';
+import PanicButton from '../SOS/PanicButton';
+import { useFamily } from '../../context/FamilyContext';
+import { useAuth } from '../../context/AuthContext';
+import { Users, Bell, History, MapPin, ShieldAlert, Radio } from 'lucide-react';
+
+export default function Dashboard() {
+  const { user } = useAuth();
+  const { members, alerts, geofences, onlineUsers, activeSOSEvents, activeJourneys } = useFamily();
+  const [activeTab, setActiveTab] = useState('family');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [selectedMember, setSelectedMember] = useState(null);
+  const [focusedCoord, setFocusedCoord] = useState(null);
+
+  // Safe zone / geofence picking state
+  const [isGeofenceDrawerOpen, setIsGeofenceDrawerOpen] = useState(false);
+  const [isPickingLocation, setIsPickingLocation] = useState(false);
+  const [pickedLocation, setPickedLocation] = useState(null);
+
+  // Route replay state
+  const [replayHistory, setReplayHistory] = useState(null);
+  const [replayIndex, setReplayIndex] = useState(0);
+  const [replayMemberName, setReplayMemberName] = useState('');
+
+  const unreadAlertsCount = alerts.filter(a => !a.is_read && !a.isRead).length;
+  const totalMembers = members.length;
+  const onlineCount = members.filter(m => onlineUsers.has(m.id)).length;
+  const offlineCount = Math.max(0, totalMembers - onlineCount);
+  const activeSOSCount = activeSOSEvents.size;
+
+  const handleSelectMember = (member) => {
+    setSelectedMember(member);
+    const lat = member.latitude != null ? member.latitude : member.latest_location?.latitude;
+    const lng = member.longitude != null ? member.longitude : member.latest_location?.longitude;
+    if (lat != null && lng != null && !isNaN(lat) && !isNaN(lng)) {
+      setFocusedCoord([lat, lng]);
+    }
+  };
+
+  const handleMapClick = (latlng) => {
+    if (isPickingLocation) {
+      setPickedLocation(latlng);
+    }
+  };
+
+  const handleStartRouteReplay = (points, name) => {
+    if (!points || points.length === 0) return;
+    setReplayHistory(points);
+    setReplayIndex(0);
+    setReplayMemberName(name);
+    if (points[0].latitude != null && points[0].longitude != null) {
+      setFocusedCoord([points[0].latitude, points[0].longitude]);
+    }
+  };
+
+  const handleCloseRouteReplay = () => {
+    setReplayHistory(null);
+    setReplayIndex(0);
+  };
+
+  return (
+    <div className="app-layout" style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw' }}>
+      <Header
+        onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+        familyName={user?.family_name || 'My Family Circle'}
+      />
+
+      {/* Emergency Alert Banner if any SOS is active */}
+      {activeSOSCount > 0 && (
+        <div
+          style={{
+            background: 'var(--danger-600)',
+            color: '#FFFFFF',
+            padding: '8px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            fontSize: '13px',
+            fontWeight: 700,
+            letterSpacing: '0.5px',
+            animation: 'alertPulse 1.5s infinite',
+            zIndex: 950
+          }}
+        >
+          <ShieldAlert size={18} />
+          <span>EMERGENCY SOS IS ACTIVE FOR {activeSOSCount} FAMILY MEMBER(S)! CHECK MAP AND ALERTS IMMEDIATELY.</span>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* Mobile Backdrop */}
+        <div
+          className={`sidebar-backdrop ${sidebarOpen ? 'visible' : ''}`}
+          onClick={() => setSidebarOpen(false)}
+        />
+
+        {/* Sidebar */}
+        <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+          {/* Quick Metrics Header */}
+          <div
+            style={{
+              padding: '12px 16px',
+              borderBottom: '1px solid var(--glass-border)',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: '8px',
+              textAlign: 'center',
+              background: 'rgba(15, 23, 42, 0.4)'
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-400)', textTransform: 'uppercase' }}>Members</div>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-100)' }}>{totalMembers}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--success-400)', textTransform: 'uppercase' }}>Online</div>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--success-500)' }}>{onlineCount}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-400)', textTransform: 'uppercase' }}>Zones</div>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--primary-400)' }}>{geofences.length}</div>
+            </div>
+          </div>
+
+          <div className="sidebar-tabs">
+            <button
+              className={`sidebar-tab ${activeTab === 'family' ? 'active' : ''}`}
+              onClick={() => setActiveTab('family')}
+            >
+              <Users size={16} />
+              <span>Family</span>
+            </button>
+
+            <button
+              className={`sidebar-tab ${activeTab === 'alerts' ? 'active' : ''}`}
+              onClick={() => setActiveTab('alerts')}
+            >
+              <Bell size={16} />
+              <span>Alerts</span>
+              {unreadAlertsCount > 0 && (
+                <span className="unread-badge" style={{ marginLeft: '4px' }}>
+                  {unreadAlertsCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              className={`sidebar-tab ${activeTab === 'history' ? 'active' : ''}`}
+              onClick={() => setActiveTab('history')}
+            >
+              <History size={16} />
+              <span>History</span>
+            </button>
+          </div>
+
+          <div className="sidebar-content">
+            {activeTab === 'family' && (
+              <FamilyPanel
+                onSelectMember={handleSelectMember}
+                selectedMemberId={selectedMember?.id}
+              />
+            )}
+            {activeTab === 'alerts' && <AlertsPanel />}
+            {activeTab === 'history' && (
+              <LocationHistory
+                onFocusPoint={(coord) => setFocusedCoord(coord)}
+                onStartRouteReplay={handleStartRouteReplay}
+              />
+            )}
+          </div>
+        </aside>
+
+        {/* Main Map View */}
+        <main className="main-content">
+          <div className="map-overlay-controls">
+            <button
+              className={`map-control-btn ${isGeofenceDrawerOpen ? 'active' : ''}`}
+              onClick={() => setIsGeofenceDrawerOpen(!isGeofenceDrawerOpen)}
+              title="Manage Safe Zones & Geofences"
+            >
+              <MapPin size={18} />
+            </button>
+          </div>
+
+          {/* Map rendered with replayHistory and replayIndex passed to show route layers */}
+          <LiveMap
+            selectedMemberId={selectedMember?.id}
+            onSelectMember={handleSelectMember}
+            focusedCoord={focusedCoord}
+            onMapClick={handleMapClick}
+            isPickingLocation={isPickingLocation}
+            replayHistory={replayHistory}
+            replayIndex={replayIndex}
+            activeJourneys={activeJourneys}
+          />
+
+          {/* Floating Route Replay Controller */}
+          {replayHistory && (
+            <RouteReplayControls
+              historyPoints={replayHistory}
+              currentIndex={replayIndex}
+              onIndexChange={setReplayIndex}
+              onClose={handleCloseRouteReplay}
+              memberName={replayMemberName}
+            />
+          )}
+
+          {/* Safe Zone Drawer */}
+          <GeofenceDrawer
+            isOpen={isGeofenceDrawerOpen}
+            onClose={() => {
+              setIsGeofenceDrawerOpen(false);
+              setIsPickingLocation(false);
+            }}
+            pickedLocation={pickedLocation}
+            isPickingLocation={isPickingLocation}
+            setIsPickingLocation={setIsPickingLocation}
+          />
+
+          {/* Emergency SOS Panic Button */}
+          <PanicButton />
+        </main>
+      </div>
+
+      <Toast />
+    </div>
+  );
+}

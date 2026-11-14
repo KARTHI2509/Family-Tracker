@@ -1,0 +1,215 @@
+const Database = require('better-sqlite3');
+const path = require('path');
+const fs = require('fs');
+
+// Resolve database path safely for local, Docker, or Cloud deployments
+let dbPath;
+if (process.env.DB_PATH) {
+  dbPath = path.isAbsolute(process.env.DB_PATH)
+    ? process.env.DB_PATH
+    : path.resolve(__dirname, '..', '..', process.env.DB_PATH);
+} else {
+  dbPath = path.resolve(__dirname, '..', '..', 'data', 'familytracker.db');
+}
+
+// Ensure database directory exists
+const dataDir = path.dirname(dbPath);
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const db = new Database(dbPath);
+
+// Enable WAL mode and foreign key constraints
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// Initialize schema
+db.exec(`
+  CREATE TABLE IF NOT EXISTS families (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    invite_code TEXT UNIQUE NOT NULL,
+    created_by INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    phone TEXT,
+    avatar_color TEXT DEFAULT '#4F46E5',
+    family_id INTEGER,
+    role TEXT DEFAULT 'user',
+    status TEXT DEFAULT 'active',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (family_id) REFERENCES families(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS locations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    latitude REAL NOT NULL,
+    longitude REAL NOT NULL,
+    accuracy REAL,
+    speed REAL DEFAULT 0,
+    battery_level INTEGER,
+    is_charging INTEGER DEFAULT 0,
+    address TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS geofences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    family_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    latitude REAL NOT NULL,
+    longitude REAL NOT NULL,
+    radius REAL NOT NULL DEFAULT 200,
+    color TEXT DEFAULT '#4F46E5',
+    created_by INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (family_id) REFERENCES families(id),
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS geofence_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    geofence_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL CHECK(event_type IN ('enter', 'exit')),
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (geofence_id) REFERENCES geofences(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS sos_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    latitude REAL,
+    longitude REAL,
+    is_active INTEGER DEFAULT 1,
+    triggered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    cancelled_at DATETIME,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    family_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    is_read INTEGER DEFAULT 0,
+    metadata TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (family_id) REFERENCES families(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS journeys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    family_id INTEGER NOT NULL,
+    destination_name TEXT NOT NULL,
+    destination_lat REAL NOT NULL,
+    destination_lng REAL NOT NULL,
+    start_lat REAL,
+    start_lng REAL,
+    status TEXT DEFAULT 'in_progress',
+    estimated_duration_min INTEGER,
+    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (family_id) REFERENCES families(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_id INTEGER,
+    actor_role TEXT,
+    action TEXT NOT NULL,
+    target_id INTEGER,
+    target_type TEXT,
+    reason TEXT,
+    metadata TEXT,
+    ip_address TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS emergency_access_grants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_id INTEGER NOT NULL,
+    target_user_id INTEGER NOT NULL,
+    case_type TEXT NOT NULL,
+    justification TEXT NOT NULL,
+    granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    is_revoked INTEGER DEFAULT 0,
+    FOREIGN KEY (admin_id) REFERENCES users(id),
+    FOREIGN KEY (target_user_id) REFERENCES users(id)
+  );
+`);
+
+// Safe Migrations for existing databases
+try {
+  const userCols = db.prepare("PRAGMA table_info('users')").all();
+  if (!userCols.some(c => c.name === 'role')) {
+    db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'");
+  }
+  if (!userCols.some(c => c.name === 'status')) {
+    db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+  }
+} catch (migErr) {
+  console.warn('Migration note (users):', migErr.message);
+}
+
+// Safe Migration: ensure sos_events allows nullable latitude/longitude without deleting user data
+try {
+  const sosTableInfo = db.prepare("PRAGMA table_info('sos_events')").all();
+  const latCol = sosTableInfo.find(c => c.name === 'latitude');
+  if (latCol && latCol.notnull === 1) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sos_events_migrated (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          latitude REAL,
+          longitude REAL,
+          is_active INTEGER DEFAULT 1,
+          triggered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          cancelled_at DATETIME,
+          FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        INSERT INTO sos_events_migrated SELECT * FROM sos_events;
+        DROP TABLE sos_events;
+        ALTER TABLE sos_events_migrated RENAME TO sos_events;
+      `);
+    })();
+  }
+} catch (migErr) {
+  console.warn('Migration note (sos_events):', migErr.message);
+}
+
+// Performance indexes
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_locations_user_timestamp ON locations(user_id, timestamp);
+  CREATE INDEX IF NOT EXISTS idx_users_family_id ON users(family_id);
+  CREATE INDEX IF NOT EXISTS idx_alerts_family_created ON alerts(family_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_geofences_family ON geofences(family_id);
+  CREATE INDEX IF NOT EXISTS idx_sos_events_active ON sos_events(is_active, user_id);
+  CREATE INDEX IF NOT EXISTS idx_geofence_events_user_fence ON geofence_events(geofence_id, user_id, timestamp);
+  CREATE INDEX IF NOT EXISTS idx_journeys_user_status ON journeys(user_id, status);
+  CREATE INDEX IF NOT EXISTS idx_journeys_family_status ON journeys(family_id, status);
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id, timestamp);
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, timestamp);
+  CREATE INDEX IF NOT EXISTS idx_emergency_grants_admin ON emergency_access_grants(admin_id, expires_at);
+`);
+
+console.log('Database initialized successfully at:', dbPath);
+
+module.exports = db;

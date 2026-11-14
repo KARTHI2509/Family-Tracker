@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Production build outputs
+dist/
+frontend/dist/
+backend/dist/
+
+# Environment files and credentials
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Local SQLite databases & journals
+backend/data/*.db
+backend/data/*.db-shm
+backend/data/*.db-wal
+backend/data/*.sqlite
+backend/data/*.sqlite3
+backend/tests/*.db
+backend/tests/*.db-shm
+backend/tests/*.db-wal
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Logs & temp files
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS metadata & Editor caches
+.DS_Store
+Thumbs.db
+.cache/
+.vite/
+.idea/
+.vscode/
+coverage/

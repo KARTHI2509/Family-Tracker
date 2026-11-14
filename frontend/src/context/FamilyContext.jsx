@@ -1,0 +1,550 @@
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { io } from 'socket.io-client';
+import api from '../services/api';
+import { useAuth } from './AuthContext';
+
+const FamilyContext = createContext(null);
+
+export function useFamily() {
+  const ctx = useContext(FamilyContext);
+  if (!ctx) throw new Error('useFamily must be used within FamilyProvider');
+  return ctx;
+}
+
+export function FamilyProvider({ children }) {
+  const { user, token } = useAuth();
+  const [members, setMembers] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [geofences, setGeofences] = useState([]);
+  const [onlineUsers, setOnlineUsers] = useState(new Set());
+  const [activeSOSEvents, setActiveSOSEvents] = useState(new Set());
+  const [socket, setSocket] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [toasts, setToasts] = useState([]);
+
+  // Location tracking state and consent
+  const [isTrackingEnabled, setIsTrackingEnabled] = useState(() => {
+    return localStorage.getItem('ft_tracking_enabled') === 'true';
+  });
+  const [trackingMode, setTrackingModeState] = useState(() => {
+    return localStorage.getItem('ft_tracking_mode') || 'balanced'; // 'battery_saver' (10m) | 'balanced' (5m) | 'high_accuracy' (1m)
+  });
+  const [trackingStatus, setTrackingStatus] = useState('idle'); // 'idle' | 'tracking' | 'denied' | 'error'
+  const [lastLocationUpdateTime, setLastLocationUpdateTime] = useState(null);
+  const [activeJourneys, setActiveJourneys] = useState([]);
+
+  const setTrackingMode = (mode) => {
+    setTrackingModeState(mode);
+    localStorage.setItem('ft_tracking_mode', mode);
+  };
+
+  const locationWatchRef = useRef(null);
+  const locationIntervalRef = useRef(null);
+  const lastLocationRef = useRef(null);
+
+  // Toast notification management
+  const addToast = useCallback((type, title, message) => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, type, title, message }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 6000);
+  }, []);
+
+  const removeToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  // Fetch family members
+  const fetchMembers = useCallback(async () => {
+    try {
+      const data = await api.get('/family/members');
+      setMembers(data.members || data || []);
+    } catch (err) {
+      console.error('Failed to fetch members:', err);
+    }
+  }, []);
+
+  // Fetch safety alerts
+  const fetchAlerts = useCallback(async () => {
+    try {
+      const data = await api.get('/alerts?limit=50&offset=0');
+      setAlerts(data.alerts || data || []);
+    } catch (err) {
+      console.error('Failed to fetch alerts:', err);
+    }
+  }, []);
+
+  // Fetch safe zones / geofences
+  const fetchGeofences = useCallback(async () => {
+    try {
+      const data = await api.get('/geofence/list');
+      setGeofences(data.geofences || data || []);
+    } catch (err) {
+      console.error('Failed to fetch geofences:', err);
+    }
+  }, []);
+
+  // Fetch active SOS events
+  const fetchActiveSOS = useCallback(async () => {
+    try {
+      const data = await api.get('/sos/active');
+      const activeList = data.activeSOSEvents || data.sosEvents || [];
+      const idSet = new Set(activeList.map(e => e.userId || e.user_id));
+      setActiveSOSEvents(idSet);
+    } catch (err) {
+      console.error('Failed to fetch active SOS:', err);
+    }
+  }, []);
+
+  // Fetch active journeys in family
+  const fetchActiveJourneys = useCallback(async () => {
+    try {
+      const data = await api.get('/journey/active');
+      setActiveJourneys(data.journeys || []);
+    } catch (err) {
+      console.error('Failed to fetch active journeys:', err);
+    }
+  }, []);
+
+  // Start tracked journey
+  const startJourney = async (journeyData) => {
+    const data = await api.post('/journey/start', journeyData);
+    if (data.journey) {
+      setActiveJourneys(prev => [data.journey, ...prev]);
+    }
+    addToast('info', 'Journey Started', `On the way to ${journeyData.destinationName}`);
+    return data;
+  };
+
+  // Safe arrival confirmation
+  const confirmArrival = async (journeyId) => {
+    const data = await api.post('/journey/arrival', { journeyId });
+    setActiveJourneys(prev => prev.filter(j => j.id !== (journeyId || j.id)));
+    addToast('success', 'Safe Arrival!', 'Your family has been notified of your safe arrival.');
+    return data;
+  };
+
+  // Emergency check-in ("Please check on me")
+  const sendCheckIn = async (message = 'Please check on me') => {
+    const data = await api.post('/journey/checkin', { message });
+    addToast('warning', 'Check-In Sent', 'Check-in request sent to your family circle.');
+    return data;
+  };
+
+  // Cancel journey
+  const cancelJourney = async () => {
+    await api.post('/journey/cancel');
+    setActiveJourneys(prev => prev.filter(j => j.user_id !== user?.id));
+    addToast('info', 'Journey Cancelled', 'Journey cancelled.');
+  };
+
+  // Create family
+  const createFamily = async (name) => {
+    const data = await api.post('/family/create', { name });
+    return data;
+  };
+
+  // Join family
+  const joinFamily = async (inviteCode) => {
+    const data = await api.post('/family/join', { inviteCode });
+    return data;
+  };
+
+  // Get invite code
+  const getInviteCode = async () => {
+    const data = await api.get('/family/invite-code');
+    return data.invite_code || data.inviteCode;
+  };
+
+  // Create geofence
+  const createGeofence = async (geofence) => {
+    const data = await api.post('/geofence/create', geofence);
+    await fetchGeofences();
+    addToast('success', 'Safe Zone Created', `"${geofence.name}" has been added`);
+    return data;
+  };
+
+  // Delete geofence
+  const deleteGeofence = async (id) => {
+    await api.delete(`/geofence/${id}`);
+    setGeofences(prev => prev.filter(g => g.id !== id));
+    addToast('info', 'Safe Zone Removed', 'The zone has been deleted');
+  };
+
+  // Trigger SOS emergency
+  const triggerSOS = async (latitude = null, longitude = null) => {
+    try {
+      const data = await api.post('/sos/trigger', { latitude, longitude });
+      setActiveSOSEvents(prev => new Set([...prev, user.id]));
+      addToast('error', '🚨 SOS Broadcast Sent', 'Your emergency alert was sent to all family members!');
+      return data;
+    } catch (err) {
+      addToast('error', 'SOS Failed', err.message || 'Could not send SOS broadcast');
+      throw err;
+    }
+  };
+
+  // Cancel SOS emergency
+  const cancelSOS = async () => {
+    try {
+      await api.post('/sos/cancel');
+      setActiveSOSEvents(prev => {
+        const next = new Set(prev);
+        next.delete(user.id);
+        return next;
+      });
+      addToast('info', 'SOS Cancelled', 'Emergency alert has been cancelled.');
+    } catch (err) {
+      addToast('error', 'Error', 'Failed to cancel SOS.');
+    }
+  };
+
+  // Mark single alert as read
+  const markAlertRead = async (alertId) => {
+    try {
+      await api.put(`/alerts/${alertId}/read`);
+      setAlerts(prev => prev.map(a =>
+        (a.id === alertId) ? { ...a, is_read: 1, isRead: true } : a
+      ));
+    } catch (err) {
+      console.error('Mark alert read error:', err);
+    }
+  };
+
+  // Mark all alerts read
+  const markAllAlertsRead = async () => {
+    try {
+      await api.put('/alerts/read-all');
+      setAlerts(prev => prev.map(a => ({ ...a, is_read: 1, isRead: true })));
+      addToast('success', 'All Read', 'All alerts marked as read');
+    } catch (err) {
+      console.error('Mark all read error:', err);
+    }
+  };
+
+  // Fetch location history (supports both history and locations keys)
+  const fetchLocationHistory = async (userId, from, to) => {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    params.set('limit', '500');
+    const qs = params.toString();
+    const data = await api.get(`/location/history/${userId}${qs ? '?' + qs : ''}`);
+    return data.history || data.locations || [];
+  };
+
+  // Update location helper with duplicate suppression to save battery
+  const sendLocationUpdate = useCallback(async (position) => {
+    try {
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+      const speed = position.coords.speed;
+      const accuracy = position.coords.accuracy;
+
+      // Check battery
+      let batteryLevel = null;
+      let isCharging = null;
+      if (navigator.getBattery) {
+        try {
+          const battery = await navigator.getBattery();
+          batteryLevel = Math.round(battery.level * 100);
+          isCharging = battery.charging ? 1 : 0;
+        } catch {}
+      }
+
+      // Duplicate check: if user moved less than 5m and speed is 0, don't spam server
+      const prev = lastLocationRef.current;
+      if (prev && prev.latitude === lat && prev.longitude === lon && !speed) {
+        return;
+      }
+
+      const payload = {
+        latitude: lat,
+        longitude: lon,
+        accuracy,
+        speed: speed || 0,
+        battery_level: batteryLevel,
+        is_charging: isCharging
+      };
+
+      lastLocationRef.current = payload;
+      await api.post('/location/update', payload);
+      setLastLocationUpdateTime(new Date());
+      setTrackingStatus('tracking');
+    } catch (err) {
+      console.warn('Location update error:', err.message);
+    }
+  }, []);
+
+  // Location tracking management with explicit consent
+  const toggleTracking = useCallback((enable) => {
+    setIsTrackingEnabled(enable);
+    localStorage.setItem('ft_tracking_enabled', enable ? 'true' : 'false');
+    if (enable) {
+      addToast('success', 'Location Sharing Started', 'Your family can now see your live updates.');
+    } else {
+      addToast('info', 'Location Sharing Paused', 'Your live location is no longer being broadcast.');
+      setTrackingStatus('idle');
+    }
+  }, [addToast]);
+
+  // Handle browser geolocation lifecycle when enabled
+  useEffect(() => {
+    if (!user || !token || !isTrackingEnabled) {
+      // Clear any active watchers if tracking is disabled
+      if (locationWatchRef.current !== null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(locationWatchRef.current);
+        locationWatchRef.current = null;
+      }
+      if (locationIntervalRef.current) {
+        clearInterval(locationIntervalRef.current);
+        locationIntervalRef.current = null;
+      }
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      setTrackingStatus('error');
+      addToast('warning', 'GPS Unavailable', 'Geolocation is not supported by your browser.');
+      return;
+    }
+
+    setTrackingStatus('tracking');
+
+    // Real-time movement watcher
+    locationWatchRef.current = navigator.geolocation.watchPosition(
+      (pos) => sendLocationUpdate(pos),
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          setTrackingStatus('denied');
+          setIsTrackingEnabled(false);
+          localStorage.setItem('ft_tracking_enabled', 'false');
+          addToast('error', 'Location Denied', 'Please grant location permissions in your browser to share location.');
+        } else {
+          setTrackingStatus('error');
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 15000 }
+    );
+
+    // Periodic sync interval adapted to battery tracking mode
+    const syncIntervalMs = trackingMode === 'battery_saver' ? 10 * 60 * 1000 : (trackingMode === 'high_accuracy' ? 60 * 1000 : 5 * 60 * 1000);
+    locationIntervalRef.current = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => sendLocationUpdate(pos),
+        () => {},
+        { enableHighAccuracy: trackingMode === 'high_accuracy', maximumAge: 60000, timeout: 10000 }
+      );
+    }, syncIntervalMs);
+
+    return () => {
+      if (locationWatchRef.current !== null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(locationWatchRef.current);
+        locationWatchRef.current = null;
+      }
+      if (locationIntervalRef.current) {
+        clearInterval(locationIntervalRef.current);
+        locationIntervalRef.current = null;
+      }
+    };
+  }, [user, token, isTrackingEnabled, trackingMode, sendLocationUpdate, addToast]);
+
+  // Socket.IO real-time connection and contract handling
+  useEffect(() => {
+    if (!token) return;
+
+    const socketUrl = (import.meta.env.VITE_SOCKET_URL || window.location.origin).replace(/\/+$/, '');
+    const s = io(socketUrl, {
+      auth: { token },
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 15,
+      reconnectionDelay: 2000
+    });
+
+    s.on('connect', () => {
+      setIsConnected(true);
+    });
+
+    s.on('disconnect', () => {
+      setIsConnected(false);
+    });
+
+    // Real-time location update (handles both userId and user_id)
+    s.on('location:update', (data) => {
+      const senderId = data.userId || data.user_id;
+      setMembers(prev => prev.map(m => {
+        if (m.id === senderId) {
+          return {
+            ...m,
+            latitude: data.latitude,
+            longitude: data.longitude,
+            latest_location: {
+              latitude: data.latitude,
+              longitude: data.longitude,
+              speed: data.speed,
+              accuracy: data.accuracy,
+              battery_level: data.batteryLevel != null ? data.batteryLevel : data.battery_level,
+              is_charging: data.isCharging != null ? data.isCharging : data.is_charging,
+              timestamp: data.timestamp
+            }
+          };
+        }
+        return m;
+      }));
+    });
+
+    // Emergency SOS triggered
+    s.on('sos:triggered', (data) => {
+      const senderId = data.userId || data.user_id;
+      setActiveSOSEvents(prev => new Set([...prev, senderId]));
+      addToast('error', '🚨 EMERGENCY SOS!', `${data.userName || data.user_name || 'A family member'} triggered an SOS!`);
+    });
+
+    // Emergency SOS cancelled
+    s.on('sos:cancelled', (data) => {
+      const senderId = data.userId || data.user_id;
+      setActiveSOSEvents(prev => {
+        const next = new Set(prev);
+        next.delete(senderId);
+        return next;
+      });
+      addToast('info', 'SOS Cancelled', `${data.userName || data.user_name || 'A family member'} cancelled their SOS.`);
+    });
+
+    // Member online
+    s.on('member:online', (data) => {
+      const onlineId = data.userId || data.user_id;
+      if (onlineId) {
+        setOnlineUsers(prev => new Set([...prev, onlineId]));
+      }
+    });
+
+    // Member offline
+    s.on('member:offline', (data) => {
+      const offlineId = data.userId || data.user_id;
+      if (offlineId) {
+        setOnlineUsers(prev => {
+          const next = new Set(prev);
+          next.delete(offlineId);
+          return next;
+        });
+      }
+    });
+
+    // Initial list of online members
+    s.on('online:members', (idList) => {
+      if (Array.isArray(idList)) {
+        setOnlineUsers(new Set(idList));
+      }
+    });
+
+    // New safety alert
+    s.on('alert:new', (data) => {
+      setAlerts(prev => [data, ...prev]);
+      addToast('warning', data.title || 'Safety Alert', data.message || 'New alert');
+    });
+
+    // Safe zone created
+    s.on('geofence:created', (data) => {
+      setGeofences(prev => {
+        if (prev.some(g => g.id === data.id)) return prev;
+        return [data, ...prev];
+      });
+    });
+
+    // Safe zone deleted
+    s.on('geofence:deleted', (data) => {
+      setGeofences(prev => prev.filter(g => g.id !== data.id));
+    });
+
+    // Member left
+    s.on('member:left', (data) => {
+      const leftId = data.userId || data.user_id;
+      setMembers(prev => prev.filter(m => m.id !== leftId));
+    });
+
+    // Real-time Journey Events
+    s.on('journey:started', (data) => {
+      if (data.journey) {
+        setActiveJourneys(prev => [data.journey, ...prev.filter(j => j.id !== data.journey.id)]);
+        addToast('info', 'Journey Started', `${data.user?.name || 'A family member'} is en route to ${data.journey.destination_name}`);
+      }
+    });
+
+    s.on('journey:completed', (data) => {
+      if (data.journey) {
+        setActiveJourneys(prev => prev.filter(j => j.id !== data.journey.id));
+        addToast('success', 'Safe Arrival!', `🎉 ${data.user?.name || 'A family member'} arrived safely at ${data.journey.destination_name}!`);
+      }
+    });
+
+    s.on('journey:checkin', (data) => {
+      addToast('warning', '⚠️ Check-in Requested', `${data.userName}: "${data.message}"`);
+    });
+
+    setSocket(s);
+
+    return () => {
+      s.disconnect();
+      setSocket(null);
+      setIsConnected(false);
+    };
+  }, [token, addToast]);
+
+  // Initial data loading on mount or login
+  useEffect(() => {
+    if (user && token && user.family_id) {
+      fetchMembers();
+      fetchAlerts();
+      fetchGeofences();
+      fetchActiveSOS();
+      fetchActiveJourneys();
+    }
+  }, [user, token, fetchMembers, fetchAlerts, fetchGeofences, fetchActiveSOS, fetchActiveJourneys]);
+
+  const value = {
+    members,
+    alerts,
+    geofences,
+    onlineUsers,
+    activeSOSEvents,
+    activeJourneys,
+    socket,
+    isConnected,
+    toasts,
+    isTrackingEnabled,
+    trackingStatus,
+    trackingMode,
+    setTrackingMode,
+    lastLocationUpdateTime,
+    toggleTracking,
+    addToast,
+    removeToast,
+    fetchMembers,
+    fetchAlerts,
+    fetchGeofences,
+    fetchActiveJourneys,
+    createFamily,
+    joinFamily,
+    getInviteCode,
+    createGeofence,
+    deleteGeofence,
+    triggerSOS,
+    cancelSOS,
+    startJourney,
+    confirmArrival,
+    sendCheckIn,
+    cancelJourney,
+    markAlertRead,
+    markAllAlertsRead,
+    fetchLocationHistory,
+    lastLocation: lastLocationRef.current,
+  };
+
+  return (
+    <FamilyContext.Provider value={value}>
+      {children}
+    </FamilyContext.Provider>
+  );
+}

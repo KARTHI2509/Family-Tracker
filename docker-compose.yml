@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  familytracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: familytracker-app
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - JWT_SECRET=${JWT_SECRET:-generate_random_secret_in_env_file}
+      - DB_PATH=/app/backend/data/familytracker.db
+    volumes:
+      - familytracker_data:/app/backend/data
+
+volumes:
+  familytracker_data:
+    driver: local
