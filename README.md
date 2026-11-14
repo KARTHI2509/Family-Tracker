@@ -1,5 +1,9 @@
 # 🛡️ FamilyTracker V2 — Real-Time Family Location & Safety Platform
 
+[![FamilyTracker CI/CD Pipeline](https://github.com/KARTHI2509/Family-Tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/KARTHI2509/Family-Tracker/actions)
+![Node Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
 A production-grade, real-time family location tracking and safety platform featuring live multi-device mapping, Google Maps integration, smart geofencing, route replay, journey safety, battery optimization modes, emergency SOS broadcast, and a comprehensive Super Admin Portal.
 
 ---
