@@ -44,8 +44,16 @@ if (process.env.CORS_ORIGIN) {
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow non-browser callers (curl, tests, server-to-server) or localhost or matching allowed origins
-    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin) || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+    // Allow non-browser callers (curl, tests, server-to-server), localhost, vercel deployments, wildcard or matching allowed origins
+    if (
+      !origin ||
+      allowedOrigins.length === 0 ||
+      allowedOrigins.includes('*') ||
+      allowedOrigins.includes(origin) ||
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1') ||
+      origin.endsWith('.vercel.app')
+    ) {
       callback(null, true);
     } else {
       callback(new Error(`CORS blocked for origin: ${origin}`));
