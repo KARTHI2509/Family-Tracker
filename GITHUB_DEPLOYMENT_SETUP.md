@@ -100,3 +100,4 @@ The workflow located at `.github/workflows/ci.yml` runs automatically on:
 
 - **To rotate `JWT_SECRET`:** Update the `JWT_SECRET` variable in the Render Dashboard and click **Save Changes** (Render will automatically redeploy). Existing user sessions will expire and require re-login.
 - **To update Database URI:** Update `MONGODB_URI` or `DATABASE_URL` in the Render Dashboard.
+
