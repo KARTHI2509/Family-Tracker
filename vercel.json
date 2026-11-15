@@ -4,10 +4,6 @@
   "outputDirectory": "frontend/dist",
   "rewrites": [
     {
-      "source": "/FamilyTracker.apk",
-      "destination": "https://family-tracker-fidw.onrender.com/FamilyTracker.apk"
-    },
-    {
       "source": "/download/(.*)",
       "destination": "https://family-tracker-fidw.onrender.com/download/$1"
     },

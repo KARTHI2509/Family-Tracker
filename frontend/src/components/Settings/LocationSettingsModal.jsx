@@ -348,7 +348,7 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
                     className="btn btn-primary"
                     style={{ fontSize: '13px', padding: '10px 16px', display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxSizing: 'border-box' }}
                   >
-                    <span>📲 Download Android APK (12.3 MB)</span>
+                    <span>📲 Download Android APK (24.4 MB)</span>
                   </a>
                   <div style={{ marginTop: '8px', textAlign: 'center', fontSize: '11px', color: 'var(--text-400)' }}>
                     Backup server download: <a href="https://family-tracker-fidw.onrender.com/FamilyTracker.apk" target="_blank" rel="noopener noreferrer" style={{ color: '#60A5FA', textDecoration: 'underline' }}>Mirror Link</a>
