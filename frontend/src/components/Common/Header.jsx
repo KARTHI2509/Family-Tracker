@@ -1,40 +1,65 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useFamily } from '../../context/FamilyContext';
-import { Menu, LogOut, Navigation, NavigationOff, AlertTriangle, ShieldCheck, BatteryCharging, Send, Settings, Users, Sparkles } from 'lucide-react';
+import {
+  Menu, LogOut, Navigation, NavigationOff, AlertTriangle, ShieldCheck,
+  BatteryCharging, Send, Settings, Users, Sparkles, Shield, ChevronDown
+} from 'lucide-react';
 import JourneyModal from '../Dashboard/JourneyModal';
 import LocationSettingsModal from '../Settings/LocationSettingsModal';
 
-export default function Header({ onToggleSidebar, familyName, onOpenFamilyManagement, onCheckUpdate, onOpenMyFamilies }) {
+export default function Header({
+  onToggleSidebar,
+  familyName,
+  onOpenFamilyManagement,
+  onCheckUpdate,
+  onOpenMyFamilies
+}) {
   const { user, logout } = useAuth();
-  const { isTrackingEnabled, toggleTracking, trackingStatus, trackingMode, setTrackingMode, myFamilies = [] } = useFamily();
+  const {
+    isTrackingEnabled,
+    toggleTracking,
+    trackingStatus,
+    trackingMode,
+    setTrackingMode,
+    myFamilies = []
+  } = useFamily();
+
   const [isJourneyModalOpen, setIsJourneyModalOpen] = useState(false);
   const [isLocationSettingsOpen, setIsLocationSettingsOpen] = useState(false);
   const [showModeDropdown, setShowModeDropdown] = useState(false);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+
+  const modeDropdownRef = useRef(null);
+  const userDropdownRef = useRef(null);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (modeDropdownRef.current && !modeDropdownRef.current.contains(e.target)) {
+        setShowModeDropdown(false);
+      }
+      if (userDropdownRef.current && !userDropdownRef.current.contains(e.target)) {
+        setShowUserDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   const getTrackingBadge = () => {
     if (trackingStatus === 'denied') {
       return (
         <button
-          className="btn btn-ghost"
+          className="header-pill-btn tracking-denied"
           onClick={() => setIsLocationSettingsOpen(true)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontSize: '12px',
-            color: 'var(--danger-400)',
-            background: 'rgba(239, 68, 68, 0.1)',
-            padding: '4px 10px',
-            borderRadius: '9999px',
-            border: '1px solid rgba(239, 68, 68, 0.3)'
-          }}
-          title="Location permission denied in browser. Click to retry."
+          title="Location permission denied. Tap to configure."
+          aria-label="Location permission denied"
         >
-          <AlertTriangle size={13} />
+          <AlertTriangle size={18} color="#F87171" strokeWidth={2.2} style={{ flexShrink: 0 }} />
           <span className="header-pill-text">GPS Blocked</span>
         </button>
       );
@@ -43,47 +68,27 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
     if (isTrackingEnabled) {
       return (
         <button
-          className="btn btn-ghost"
+          className="header-pill-btn tracking-live"
           onClick={() => toggleTracking(false)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontSize: '12px',
-            color: 'var(--success-400)',
-            background: 'rgba(16, 185, 129, 0.12)',
-            padding: '4px 10px',
-            borderRadius: '9999px',
-            border: '1px solid rgba(16, 185, 129, 0.3)'
-          }}
-          title="You are currently broadcasting live location. Click to pause."
+          title="Broadcasting live location. Tap to pause."
+          aria-label="Location sharing active"
         >
-          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#10B981', display: 'inline-block' }} />
-          <Navigation size={12} />
-          <span className="header-pill-text">Sharing Live</span>
+          <span className="live-pulse-dot" />
+          <Navigation size={18} color="#34D399" strokeWidth={2.4} style={{ flexShrink: 0 }} />
+          <span className="header-pill-text">Live</span>
         </button>
       );
     }
 
     return (
       <button
-        className="btn btn-ghost"
+        className="header-pill-btn tracking-idle"
         onClick={() => toggleTracking(true)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          fontSize: '12px',
-          color: 'var(--text-300)',
-          background: 'var(--bg-700)',
-          padding: '4px 10px',
-          borderRadius: '9999px',
-          border: '1px solid var(--glass-border)'
-        }}
-        title="Location sharing is paused. Click to start broadcasting."
+        title="Location sharing is paused. Tap to start."
+        aria-label="Start location sharing"
       >
-        <NavigationOff size={13} />
-        <span className="header-pill-text">Share Location</span>
+        <NavigationOff size={18} color="#94A3B8" strokeWidth={2.2} style={{ flexShrink: 0 }} />
+        <span className="header-pill-text">Share</span>
       </button>
     );
   };
@@ -91,184 +96,102 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
   return (
     <>
       <header className="header">
+        {/* Left Side: Navigation Menu, Logo & Family Selector */}
         <div className="header-left">
           <button
-            className="hamburger-btn btn btn-ghost"
+            className="hamburger-btn"
             onClick={onToggleSidebar}
             aria-label="Toggle navigation menu"
-            style={{ padding: '6px' }}
+            title="Open Menu"
           >
-            <Menu size={20} />
+            <Menu size={22} color="#F8FAFC" strokeWidth={2.2} />
           </button>
 
           <div className="logo">
-            <span className="logo-icon">🛡️</span>
+            <div className="logo-icon-wrapper">
+              <Shield size={22} color="#818CF8" strokeWidth={2.4} />
+            </div>
             <span className="logo-text">FamilyTracker</span>
           </div>
 
           {familyName && (
             <button
               type="button"
-              className="family-name-badge clickable"
+              className="family-name-badge"
               onClick={onOpenMyFamilies || onOpenFamilyManagement}
               title="View All My Families, Switch or Create Circles"
-              style={{
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px',
-                border: '1px solid rgba(99, 102, 241, 0.4)',
-                background: 'rgba(99, 102, 241, 0.15)',
-                color: 'var(--text-100)',
-                padding: '4px 10px',
-                borderRadius: '8px',
-                fontSize: '12px',
-                fontWeight: 600,
-                transition: 'all 0.2s ease'
-              }}
             >
-              <Users size={13} color="#818CF8" />
-              <span>{familyName}</span>
+              <Users size={16} color="#818CF8" strokeWidth={2.2} style={{ flexShrink: 0 }} />
+              <span className="family-name-text">{familyName}</span>
               {myFamilies.length > 1 && (
-                <span style={{ fontSize: '10px', background: 'var(--primary-600)', color: '#fff', borderRadius: '10px', padding: '1px 5px', marginLeft: '2px' }}>
+                <span className="family-count-badge">
                   {myFamilies.length}
                 </span>
               )}
+              <ChevronDown size={14} color="#94A3B8" style={{ flexShrink: 0 }} />
             </button>
           )}
         </div>
 
-        <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* My Families Multi-Circle Button */}
+        {/* Right Side: Quick Action Controls & User Menu */}
+        <div className="header-right">
+          {/* Desktop-Only: Multi-Family Circle Manager */}
           <button
             type="button"
-            className="btn btn-ghost hide-mobile"
+            className="header-pill-btn hide-mobile"
             onClick={onOpenMyFamilies || onOpenFamilyManagement}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '12px',
-              padding: '4px 10px',
-              borderRadius: '9999px',
-              background: 'rgba(99, 102, 241, 0.15)',
-              color: '#C7D2FE',
-              border: '1px solid rgba(99, 102, 241, 0.4)'
-            }}
             title="Switch, Create, or Join Multiple Families"
           >
-            <Users size={13} color="#818CF8" />
+            <Users size={18} color="#818CF8" strokeWidth={2} style={{ flexShrink: 0 }} />
             <span className="header-pill-text">My Families {myFamilies.length > 1 ? `(${myFamilies.length})` : ''}</span>
           </button>
 
-          {/* Journey Safety & Check-In Button */}
+          {/* Quick Trip & Safety Check-In */}
           <button
-            className="btn btn-ghost hide-mobile"
+            type="button"
+            className="header-pill-btn header-trip-btn"
             onClick={() => setIsJourneyModalOpen(true)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '12px',
-              padding: '4px 10px',
-              borderRadius: '9999px',
-              background: 'rgba(59, 130, 246, 0.12)',
-              color: '#60A5FA',
-              border: '1px solid rgba(59, 130, 246, 0.3)'
-            }}
             title="Start a tracked trip or send emergency check-in"
+            aria-label="Trip and Check-In"
           >
-            <Send size={13} />
-            <span className="header-pill-text">Trip & Check-In</span>
+            <Send size={18} color="#60A5FA" strokeWidth={2.2} style={{ flexShrink: 0 }} />
+            <span className="header-pill-text">Trip</span>
           </button>
 
-          {/* Battery Mode Switcher */}
-          <div className="hide-mobile" style={{ position: 'relative' }}>
+          {/* Desktop-Only: Frequency / Battery Mode Dropdown */}
+          <div className="hide-mobile" style={{ position: 'relative' }} ref={modeDropdownRef}>
             <button
-              className="btn btn-ghost"
+              type="button"
+              className="header-pill-btn"
               onClick={() => setShowModeDropdown(!showModeDropdown)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '11px',
-                padding: '4px 8px',
-                borderRadius: '9999px',
-                background: 'var(--bg-700)',
-                color: 'var(--text-300)',
-                border: '1px solid var(--glass-border)'
-              }}
               title="Change location refresh frequency"
             >
-              <BatteryCharging size={13} />
+              <BatteryCharging size={18} color="#FBBF24" strokeWidth={2} style={{ flexShrink: 0 }} />
               <span className="header-pill-text" style={{ textTransform: 'capitalize' }}>
                 {trackingMode === 'battery_saver' ? 'Eco (10m)' : (trackingMode === 'high_accuracy' ? 'Live (1m)' : 'Balanced (5m)')}
               </span>
             </button>
 
             {showModeDropdown && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '36px',
-                  right: '0',
-                  background: 'var(--bg-800)',
-                  border: '1px solid var(--glass-border)',
-                  borderRadius: '8px',
-                  padding: '6px',
-                  boxShadow: 'var(--shadow-xl)',
-                  zIndex: 999,
-                  minWidth: '150px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px'
-                }}
-              >
+              <div className="header-dropdown-menu">
                 <button
                   type="button"
                   onClick={() => { setTrackingMode('battery_saver'); setShowModeDropdown(false); }}
-                  style={{
-                    background: trackingMode === 'battery_saver' ? 'var(--primary-600)' : 'transparent',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '6px 10px',
-                    textAlign: 'left',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    cursor: 'pointer'
-                  }}
+                  className={trackingMode === 'battery_saver' ? 'active' : ''}
                 >
                   Eco Mode (10 min)
                 </button>
                 <button
                   type="button"
                   onClick={() => { setTrackingMode('balanced'); setShowModeDropdown(false); }}
-                  style={{
-                    background: trackingMode === 'balanced' ? 'var(--primary-600)' : 'transparent',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '6px 10px',
-                    textAlign: 'left',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    cursor: 'pointer'
-                  }}
+                  className={trackingMode === 'balanced' ? 'active' : ''}
                 >
                   Balanced (5 min)
                 </button>
                 <button
                   type="button"
                   onClick={() => { setTrackingMode('high_accuracy'); setShowModeDropdown(false); }}
-                  style={{
-                    background: trackingMode === 'high_accuracy' ? 'var(--primary-600)' : 'transparent',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '6px 10px',
-                    textAlign: 'left',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    cursor: 'pointer'
-                  }}
+                  className={trackingMode === 'high_accuracy' ? 'active' : ''}
                 >
                   High Accuracy (1 min)
                 </button>
@@ -279,70 +202,141 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
           {/* Location Sharing Controller */}
           {getTrackingBadge()}
 
-          {/* Super Admin Direct Pill Link */}
+          {/* Desktop-Only: Super Admin Direct Link */}
           {isAdmin && (
             <Link
               to="/admin/dashboard"
-              style={{
-                textDecoration: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                fontSize: '12px',
-                fontWeight: 700,
-                color: '#F59E0B',
-                background: 'rgba(245, 158, 11, 0.12)',
-                border: '1px solid rgba(245, 158, 11, 0.4)',
-                padding: '4px 10px',
-                borderRadius: '9999px'
-              }}
+              className="header-pill-btn admin-badge hide-mobile"
+              title="Admin Dashboard"
             >
-              <ShieldCheck size={14} />
+              <ShieldCheck size={18} color="#F59E0B" strokeWidth={2.2} style={{ flexShrink: 0 }} />
               <span className="header-pill-text">Admin</span>
             </Link>
           )}
 
-          {/* Check for Updates Button */}
+          {/* Desktop-Only: Sparkles Check for Updates */}
           {onCheckUpdate && (
             <button
-              className="btn btn-ghost"
+              type="button"
+              className="header-icon-btn hide-mobile"
               onClick={onCheckUpdate}
               title="Check for App Updates"
-              style={{ padding: '6px', color: '#34D399' }}
               aria-label="Check for Updates"
             >
-              <Sparkles size={18} />
+              <Sparkles size={20} color="#34D399" strokeWidth={2} />
             </button>
           )}
 
-          {/* Location Permissions & Settings Button */}
+          {/* Location Settings Button */}
           <button
-            className="btn btn-ghost"
+            type="button"
+            className="header-icon-btn"
             onClick={() => setIsLocationSettingsOpen(true)}
-            title="Location Permissions & Tracking Settings"
-            style={{ padding: '6px', color: 'var(--text-300)' }}
+            title="Location Permissions, Background & Battery Settings"
             aria-label="Location Settings"
           >
-            <Settings size={18} />
+            <Settings size={20} color="#CBD5E1" strokeWidth={2} />
           </button>
 
-          <div className="user-menu" style={{ marginLeft: '4px' }}>
-            <div
+          {/* User Profile Menu */}
+          <div className="user-menu" ref={userDropdownRef}>
+            <button
+              type="button"
               className="user-avatar-small"
+              onClick={() => setShowUserDropdown(!showUserDropdown)}
               style={{ backgroundColor: user?.avatar_color || '#4F46E5' }}
               title={`${user?.name} (${user?.email})`}
+              aria-label="User Account Menu"
             >
               {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
-            </div>
+            </button>
+
+            {/* Desktop Logout Button */}
             <button
-              className="btn btn-ghost"
+              type="button"
+              className="header-pill-btn logout-btn hide-mobile"
               onClick={logout}
               title="Log out"
-              style={{ padding: '6px 10px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+              aria-label="Log out"
             >
-              <LogOut size={16} />
-              <span className="header-pill-text" style={{ fontSize: '12px' }}>Logout</span>
+              <LogOut size={16} color="#F87171" strokeWidth={2} style={{ flexShrink: 0 }} />
+              <span className="header-pill-text">Logout</span>
             </button>
+
+            {/* Mobile / Compact User Dropdown Menu */}
+            {showUserDropdown && (
+              <div className="header-dropdown-menu user-dropdown">
+                <div className="user-dropdown-header">
+                  <div className="user-dropdown-name">{user?.name || 'User'}</div>
+                  <div className="user-dropdown-email">{user?.email}</div>
+                </div>
+
+                <div className="user-dropdown-divider" />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUserDropdown(false);
+                    if (onOpenMyFamilies) onOpenMyFamilies();
+                  }}
+                  className="user-dropdown-item"
+                >
+                  <Users size={16} color="#818CF8" />
+                  <span>My Families & Circles ({myFamilies.length})</span>
+                </button>
+
+                {isAdmin && (
+                  <Link
+                    to="/admin/dashboard"
+                    onClick={() => setShowUserDropdown(false)}
+                    className="user-dropdown-item"
+                  >
+                    <ShieldCheck size={16} color="#F59E0B" />
+                    <span>Admin Dashboard</span>
+                  </Link>
+                )}
+
+                {onCheckUpdate && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowUserDropdown(false);
+                      onCheckUpdate();
+                    }}
+                    className="user-dropdown-item"
+                  >
+                    <Sparkles size={16} color="#34D399" />
+                    <span>Check for Updates</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUserDropdown(false);
+                    setIsLocationSettingsOpen(true);
+                  }}
+                  className="user-dropdown-item"
+                >
+                  <Settings size={16} color="#CBD5E1" />
+                  <span>App & Location Settings</span>
+                </button>
+
+                <div className="user-dropdown-divider" />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUserDropdown(false);
+                    logout();
+                  }}
+                  className="user-dropdown-item text-danger"
+                >
+                  <LogOut size={16} color="#EF4444" />
+                  <span>Log Out</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -353,7 +347,7 @@ export default function Header({ onToggleSidebar, familyName, onOpenFamilyManage
         onClose={() => setIsJourneyModalOpen(false)}
       />
 
-      {/* Location Permissions Settings Modal */}
+      {/* Location Permissions & Settings Modal */}
       <LocationSettingsModal
         isOpen={isLocationSettingsOpen}
         onClose={() => setIsLocationSettingsOpen(false)}

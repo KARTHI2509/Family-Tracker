@@ -3,6 +3,14 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './App.css';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { Capacitor } from '@capacitor/core';
+
+// Configure native Android Status Bar style
+if (Capacitor.isNativePlatform()) {
+  StatusBar.setStyle({ style: Style.Dark }).catch(() => {});
+  StatusBar.setBackgroundColor({ color: '#0F172A' }).catch(() => {});
+}
 
 // PWA Service Worker Registration (silent on startup, manual check only)
 if ('serviceWorker' in navigator) {
@@ -10,7 +18,6 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker
       .register('/sw.js')
       .then((reg) => {
-        // Registered successfully - manual update checks will call reg.update()
         if (reg.waiting) {
           console.log('⚡ A pending service worker is waiting for user activation');
         }

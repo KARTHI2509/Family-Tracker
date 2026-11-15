@@ -268,17 +268,6 @@ export default function Dashboard() {
 
         {/* Main Map View */}
         <main className="main-content">
-          <div className="map-overlay-controls" style={{ position: 'absolute', top: '12px', left: '52px', zIndex: 800 }}>
-            <button
-              className={`map-control-btn ${isGeofenceDrawerOpen ? 'active' : ''}`}
-              onClick={() => setIsGeofenceDrawerOpen(!isGeofenceDrawerOpen)}
-              title="Manage Safe Zones & Geofences"
-              style={{ width: '38px', height: '38px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <MapPin size={18} />
-            </button>
-          </div>
-
           {/* Map rendered with replayHistory and replayIndex passed to show route layers */}
           <LiveMap
             selectedMemberId={selectedMember?.id}
@@ -289,6 +278,8 @@ export default function Dashboard() {
             replayHistory={replayHistory}
             replayIndex={replayIndex}
             activeJourneys={activeJourneys}
+            onToggleGeofences={() => setIsGeofenceDrawerOpen(!isGeofenceDrawerOpen)}
+            isGeofenceDrawerOpen={isGeofenceDrawerOpen}
           />
 
           {/* Floating Route Replay Controller */}

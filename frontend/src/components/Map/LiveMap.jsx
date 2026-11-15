@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap, AttributionControl } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useFamily } from '../../context/FamilyContext';
@@ -7,7 +7,8 @@ import { RouteReplayLayer } from './RouteReplay';
 import { formatDistanceToNow } from 'date-fns';
 import {
   Battery, Gauge, MapPin, Radio, Layers, NavigationOff,
-  Navigation, Eye, Maximize, Compass, ExternalLink, X, Flag
+  Navigation, Eye, Maximize, Compass, ExternalLink, X, Flag,
+  Plus, Minus, Crosshair
 } from 'lucide-react';
 
 // Fix Leaflet marker icons in Vite
@@ -149,6 +150,15 @@ function MapClickHandler({ onMapClick }) {
   return null;
 }
 
+// Expose Leaflet map instance to custom control toolbar
+function MapInstanceBridge({ onMapReady }) {
+  const map = useMap();
+  useEffect(() => {
+    if (onMapReady) onMapReady(map);
+  }, [map, onMapReady]);
+  return null;
+}
+
 export default function LiveMap({
   selectedMemberId,
   onSelectMember,
@@ -157,9 +167,12 @@ export default function LiveMap({
   isPickingLocation,
   replayHistory,
   replayIndex,
-  activeJourneys = []
+  activeJourneys = [],
+  onToggleGeofences,
+  isGeofenceDrawerOpen
 }) {
   const { members, geofences, onlineUsers, activeSOSEvents } = useFamily();
+  const [mapInstance, setMapInstance] = useState(null);
   const [activeLayerKey, setActiveLayerKey] = useState(() => {
     const saved = localStorage.getItem('ft_map_layer');
     if (saved && MAP_LAYERS[saved] && saved !== 'osm') return saved;
@@ -466,32 +479,85 @@ export default function LiveMap({
         </div>
       )}
 
+      {/* Map Control Toolbar (Top-Left) */}
+      <div className="map-toolbar-left" style={{ position: 'absolute', top: '12px', left: '12px', zIndex: 850, display: 'flex', gap: '8px' }}>
+        <button
+          type="button"
+          className="map-control-btn"
+          onClick={() => mapInstance?.zoomIn()}
+          title="Zoom In"
+          aria-label="Zoom In"
+        >
+          <Plus size={20} color="#F8FAFC" strokeWidth={2.4} />
+        </button>
+
+        <button
+          type="button"
+          className="map-control-btn"
+          onClick={() => mapInstance?.zoomOut()}
+          title="Zoom Out"
+          aria-label="Zoom Out"
+        >
+          <Minus size={20} color="#F8FAFC" strokeWidth={2.4} />
+        </button>
+
+        <button
+          type="button"
+          className="map-control-btn"
+          onClick={() => {
+            if (userLat != null && userLng != null) {
+              mapInstance?.flyTo([userLat, userLng], 16, { animate: true, duration: 1.2 });
+            }
+          }}
+          title={userLat != null ? "Center on My Location" : "Location sharing paused"}
+          aria-label="Center on My Location"
+        >
+          <Crosshair size={20} color={userLat != null ? "#60A5FA" : "#94A3B8"} strokeWidth={2.2} />
+        </button>
+
+        {onToggleGeofences && (
+          <button
+            type="button"
+            className={`map-control-btn ${isGeofenceDrawerOpen ? 'active' : ''}`}
+            onClick={onToggleGeofences}
+            title="Safe Zones & Geofences"
+            aria-label="Safe Zones & Geofences"
+          >
+            <MapPin size={20} color={isGeofenceDrawerOpen ? '#FFFFFF' : '#818CF8'} strokeWidth={2.2} />
+          </button>
+        )}
+      </div>
+
       {/* Map Control Toolbar (Top-Right) */}
-      <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 850, display: 'flex', gap: '8px' }}>
+      <div className="map-toolbar-right" style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 850, display: 'flex', gap: '8px' }}>
         {/* Layer Switcher */}
         <div style={{ position: 'relative' }}>
           <button
+            type="button"
             className={`map-control-btn ${showLayerMenu ? 'active' : ''}`}
             onClick={() => setShowLayerMenu(!showLayerMenu)}
-            title="Switch Map Tiles (Google Maps, OpenStreetMap, Satellite, Topo)"
-            style={{ width: 'auto', padding: '0 12px', gap: '6px', fontSize: '12px', fontWeight: 600 }}
+            title="Switch Map Layers (Google Maps, Satellite, Topo)"
+            aria-label="Switch Map Layers"
+            style={{ width: 'auto', padding: '0 10px', gap: '6px' }}
           >
-            <Layers size={16} />
+            <Layers size={20} color="#F8FAFC" strokeWidth={2.2} />
             <span className="map-layer-btn-label">{activeLayer.name}</span>
           </button>
 
           {showLayerMenu && (
             <div
+              className="map-layer-dropdown"
               style={{
                 position: 'absolute',
-                top: '46px',
+                top: '48px',
                 right: '0',
-                background: 'var(--bg-800)',
+                background: 'rgba(15, 23, 42, 0.96)',
+                backdropFilter: 'blur(16px)',
                 border: '1px solid var(--glass-border)',
                 borderRadius: 'var(--radius-lg)',
                 boxShadow: 'var(--shadow-xl)',
                 padding: '6px',
-                minWidth: '190px',
+                minWidth: '200px',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '4px',
@@ -501,13 +567,14 @@ export default function LiveMap({
               {Object.entries(MAP_LAYERS).map(([key, layer]) => (
                 <button
                   key={key}
+                  type="button"
                   onClick={() => handleSelectLayer(key)}
                   style={{
                     background: activeLayerKey === key ? 'var(--primary-600)' : 'transparent',
                     color: activeLayerKey === key ? '#ffffff' : 'var(--text-200)',
                     border: 'none',
                     borderRadius: 'var(--radius-md)',
-                    padding: '8px 12px',
+                    padding: '10px 12px',
                     textAlign: 'left',
                     fontSize: '13px',
                     fontWeight: activeLayerKey === key ? 700 : 500,
@@ -515,11 +582,12 @@ export default function LiveMap({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
+                    minHeight: '44px',
                     transition: 'background 0.2s',
                   }}
                 >
                   <span>{layer.name}</span>
-                  {activeLayerKey === key && <span style={{ fontSize: '10px' }}>✓</span>}
+                  {activeLayerKey === key && <span style={{ fontSize: '12px', fontWeight: 700 }}>✓</span>}
                 </button>
               ))}
             </div>
@@ -528,32 +596,35 @@ export default function LiveMap({
 
         {/* Fit Bounds Button */}
         <button
+          type="button"
           className="map-control-btn"
           onClick={() => setTriggerFitCount(prev => prev + 1)}
           title="Fit All Members in View"
-          style={{ width: '38px', height: '38px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          aria-label="Fit All Members in View"
         >
-          <Compass size={18} />
+          <Compass size={20} color="#F8FAFC" strokeWidth={2.2} />
         </button>
 
         {/* Legend Toggle */}
         <button
+          type="button"
           className={`map-control-btn ${showLegend ? 'active' : ''}`}
           onClick={() => setShowLegend(!showLegend)}
           title="Toggle Map Legend"
-          style={{ width: '38px', height: '38px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          aria-label="Toggle Map Legend"
         >
-          <Eye size={18} />
+          <Eye size={20} color={showLegend ? '#FFFFFF' : '#F8FAFC'} strokeWidth={2.2} />
         </button>
 
         {/* Fullscreen Toggle */}
         <button
+          type="button"
           className="map-control-btn"
           onClick={toggleFullscreen}
           title="Toggle Fullscreen"
-          style={{ width: '38px', height: '38px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          aria-label="Toggle Fullscreen"
         >
-          <Maximize size={18} />
+          <Maximize size={20} color="#F8FAFC" strokeWidth={2.2} />
         </button>
       </div>
 
@@ -592,9 +663,13 @@ export default function LiveMap({
       <MapContainer
         center={defaultCenter}
         zoom={13}
+        zoomControl={false}
+        attributionControl={false}
         scrollWheelZoom={true}
         style={{ height: '100%', width: '100%' }}
       >
+        <MapInstanceBridge onMapReady={setMapInstance} />
+        <AttributionControl position="bottomleft" prefix="Leaflet" />
         <TileLayer
           key={activeLayerKey}
           attribution={activeLayer.attribution}

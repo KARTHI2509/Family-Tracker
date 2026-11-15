@@ -9,7 +9,10 @@
     "LocalNotifications": {
       "smallIcon": "ic_stat_location",
       "iconColor": "#4F46E5"
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#0F172A"
     }
   }
 }
-

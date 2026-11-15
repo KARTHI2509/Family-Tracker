@@ -1,5 +1,5 @@
 import React from 'react';
-import { Map, Users, Bell, History, Shield, MapPin } from 'lucide-react';
+import { Map, Users, Bell, History, MapPin } from 'lucide-react';
 
 export default function MobileBottomNav({
   activeTab,
@@ -7,43 +7,48 @@ export default function MobileBottomNav({
   onSelectTab,
   onToggleMap,
   unreadAlertsCount = 0,
-  onOpenSafetyModal,
   onToggleGeofences,
   isGeofenceDrawerOpen
 }) {
+  const isMapActive = !sidebarOpen && !isGeofenceDrawerOpen;
+  const isFamilyActive = sidebarOpen && activeTab === 'family';
+  const isAlertsActive = sidebarOpen && activeTab === 'alerts';
+  const isHistoryActive = sidebarOpen && activeTab === 'history';
+  const isZonesActive = isGeofenceDrawerOpen;
+
   return (
     <nav className="mobile-bottom-nav" aria-label="Mobile Navigation Bar">
-      {/* 1. Map Button */}
+      {/* 1. Map Tab */}
       <button
         type="button"
-        className={`mobile-nav-item ${!sidebarOpen && !isGeofenceDrawerOpen ? 'active' : ''}`}
+        className={`mobile-nav-item ${isMapActive ? 'active' : ''}`}
         onClick={onToggleMap}
         aria-label="View Live Map"
       >
-        <Map size={20} />
+        <Map size={24} strokeWidth={isMapActive ? 2.4 : 2} />
         <span>Map</span>
       </button>
 
-      {/* 2. Family Button */}
+      {/* 2. Family Tab */}
       <button
         type="button"
-        className={`mobile-nav-item ${sidebarOpen && activeTab === 'family' ? 'active' : ''}`}
+        className={`mobile-nav-item ${isFamilyActive ? 'active' : ''}`}
         onClick={() => onSelectTab('family')}
         aria-label="View Family Members"
       >
-        <Users size={20} />
+        <Users size={24} strokeWidth={isFamilyActive ? 2.4 : 2} />
         <span>Family</span>
       </button>
 
-      {/* 3. Alerts Button (with badge) */}
+      {/* 3. Alerts Tab (with badge) */}
       <button
         type="button"
-        className={`mobile-nav-item ${sidebarOpen && activeTab === 'alerts' ? 'active' : ''}`}
+        className={`mobile-nav-item ${isAlertsActive ? 'active' : ''}`}
         onClick={() => onSelectTab('alerts')}
         aria-label="View Safety Alerts"
         style={{ position: 'relative' }}
       >
-        <Bell size={20} />
+        <Bell size={24} strokeWidth={isAlertsActive ? 2.4 : 2} />
         <span>Alerts</span>
         {unreadAlertsCount > 0 && (
           <span className="mobile-nav-badge">
@@ -52,28 +57,27 @@ export default function MobileBottomNav({
         )}
       </button>
 
-      {/* 4. History Button */}
+      {/* 4. History Tab */}
       <button
         type="button"
-        className={`mobile-nav-item ${sidebarOpen && activeTab === 'history' ? 'active' : ''}`}
+        className={`mobile-nav-item ${isHistoryActive ? 'active' : ''}`}
         onClick={() => onSelectTab('history')}
         aria-label="View Location History"
       >
-        <History size={20} />
+        <History size={24} strokeWidth={isHistoryActive ? 2.4 : 2} />
         <span>History</span>
       </button>
 
-      {/* 5. Safe Zones / Safety Trip Button */}
+      {/* 5. Safe Zones Tab */}
       <button
         type="button"
-        className={`mobile-nav-item ${isGeofenceDrawerOpen ? 'active' : ''}`}
+        className={`mobile-nav-item ${isZonesActive ? 'active' : ''}`}
         onClick={onToggleGeofences}
         aria-label="Manage Safe Zones"
       >
-        <MapPin size={20} />
+        <MapPin size={24} strokeWidth={isZonesActive ? 2.4 : 2} />
         <span>Zones</span>
       </button>
     </nav>
   );
 }
-
