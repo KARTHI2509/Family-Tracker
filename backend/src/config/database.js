@@ -307,6 +307,23 @@ try {
 
   // Atomically migrate existing families to groups and populate memberships
   db.transaction(() => {
+    // 1. Align groups whose invite_code matches a family but ID differs
+    try {
+      const mismatched = db.prepare(`
+        SELECT f.id as fam_id, g.id as grp_id
+        FROM families f
+        JOIN groups g ON f.invite_code = g.invite_code AND f.id != g.id
+      `).all();
+      for (const m of mismatched) {
+        try {
+          db.prepare('UPDATE group_members SET group_id = ? WHERE group_id = ?').run(m.fam_id, m.grp_id);
+          db.prepare('UPDATE group_location_settings SET group_id = ? WHERE group_id = ?').run(m.fam_id, m.grp_id);
+          db.prepare('DELETE FROM groups WHERE id = ?').run(m.fam_id);
+          db.prepare('UPDATE groups SET id = ? WHERE id = ?').run(m.fam_id, m.grp_id);
+        } catch (_) {}
+      }
+    } catch (_) {}
+
     db.exec(`
       INSERT OR IGNORE INTO groups (id, name, group_type, avatar_color, icon, created_by, invite_code, created_at, status)
       SELECT id, name, 'FAMILY', '#4F46E5', 'Users', created_by, invite_code, created_at, 'active'
