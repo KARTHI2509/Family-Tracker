@@ -39,6 +39,7 @@
             android:name="com.familytracker.app.LocationForegroundService"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="location" />
 
         <!-- Auto-recovery after device restart -->

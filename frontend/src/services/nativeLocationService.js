@@ -328,7 +328,7 @@ class NativeLocationService {
   /**
    * Start Native Location Tracking
    */
-  async startTracking(mode = 'balanced', uploadFn) {
+  async startTracking(mode = 'balanced', uploadFn, authOptions = {}) {
     this.currentMode = mode;
     this.uploadFn = uploadFn;
     this.isTracking = true;
@@ -337,11 +337,13 @@ class NativeLocationService {
     await Preferences.set({ key: STORAGE_KEYS.TRACKING_ENABLED, value: 'true' });
     await Preferences.set({ key: STORAGE_KEYS.TRACKING_MODE, value: mode });
 
-    // On Android native, start the Android Location Foreground Service
+    // On Android native, start the Android Location Foreground Service with credentials for true native 24/7 background updates
     if (this.isNative && this.platform === 'android') {
       try {
-        await FamilyLocation.startForegroundService();
-        console.log('[NativeLocation] Android LocationForegroundService started.');
+        const token = authOptions.token || (typeof localStorage !== 'undefined' ? localStorage.getItem('ft_token') : '') || '';
+        const apiUrl = authOptions.apiUrl || 'https://family-tracker-fidw.onrender.com/api';
+        await FamilyLocation.startForegroundService({ token, apiUrl, mode });
+        console.log('[NativeLocation] Android LocationForegroundService started with native GPS transmission.');
       } catch (err) {
         console.warn('[NativeLocation] Failed to start foreground service:', err.message);
       }

@@ -719,8 +719,9 @@ export function FamilyProvider({ children }) {
       }));
     });
 
-    // Start tracking in selected mode
-    nativeLocationService.startTracking(trackingMode, uploadLocationFix).catch((err) => {
+    // Start tracking in selected mode with authentication context for native background transmission
+    const cloudApiUrl = 'https://family-tracker-fidw.onrender.com/api';
+    nativeLocationService.startTracking(trackingMode, uploadLocationFix, { token, apiUrl: cloudApiUrl }).catch((err) => {
       console.warn('Native tracking error:', err);
       setTrackingStatus('error');
     });

@@ -162,8 +162,24 @@ public class FamilyLocationPlugin extends Plugin {
     public void startForegroundService(PluginCall call) {
         try {
             Context context = getContext();
+            String token = call.getString("token", "");
+            String apiUrl = call.getString("apiUrl", "https://family-tracker-fidw.onrender.com/api");
+            String mode = call.getString("mode", "balanced");
+
+            android.content.SharedPreferences prefs = context.getSharedPreferences("familytracker_native_prefs", Context.MODE_PRIVATE);
+            prefs.edit()
+                .putString("token", token)
+                .putString("apiUrl", apiUrl)
+                .putString("mode", mode)
+                .putBoolean("tracking_enabled", true)
+                .apply();
+
             Intent intent = new Intent(context, LocationForegroundService.class);
             intent.setAction(LocationForegroundService.ACTION_START);
+            intent.putExtra("token", token);
+            intent.putExtra("apiUrl", apiUrl);
+            intent.putExtra("mode", mode);
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 ContextCompat.startForegroundService(context, intent);
             } else {
@@ -181,6 +197,11 @@ public class FamilyLocationPlugin extends Plugin {
     public void stopForegroundService(PluginCall call) {
         try {
             Context context = getContext();
+            android.content.SharedPreferences prefs = context.getSharedPreferences("familytracker_native_prefs", Context.MODE_PRIVATE);
+            prefs.edit()
+                .putBoolean("tracking_enabled", false)
+                .apply();
+
             Intent intent = new Intent(context, LocationForegroundService.class);
             intent.setAction(LocationForegroundService.ACTION_STOP);
             context.startService(intent);
