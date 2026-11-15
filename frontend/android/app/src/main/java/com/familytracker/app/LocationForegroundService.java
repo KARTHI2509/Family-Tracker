@@ -1,6 +1,7 @@
 package com.familytracker.app;
 
 import android.Manifest;
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -19,6 +20,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
@@ -261,11 +263,52 @@ public class LocationForegroundService extends Service implements LocationListen
         if (enabled) {
             Notification notification = createTrackingNotification();
             startForeground(NOTIFICATION_ID, notification);
+            startNativeLocationTracking();
+
+            // Self-revival watchdog via AlarmManager if OS terminates task process
+            try {
+                Intent restartServiceIntent = new Intent(getApplicationContext(), LocationForegroundService.class);
+                restartServiceIntent.setPackage(getPackageName());
+                restartServiceIntent.setAction(ACTION_START);
+                PendingIntent restartPendingIntent = PendingIntent.getService(
+                    getApplicationContext(),
+                    101,
+                    restartServiceIntent,
+                    PendingIntent.FLAG_ONE_SHOT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                );
+                AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+                if (alarmManager != null) {
+                    alarmManager.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 1000, restartPendingIntent);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Watchdog alarm setup exception: " + e.getMessage());
+            }
         }
     }
 
     @Override
     public void onDestroy() {
+        SharedPreferences prefs = getSharedPreferences("familytracker_native_prefs", Context.MODE_PRIVATE);
+        boolean enabled = prefs.getBoolean("tracking_enabled", false);
+        if (enabled) {
+            Log.w(TAG, "Service being destroyed while tracking is active! Scheduling immediate revival.");
+            try {
+                Intent restartServiceIntent = new Intent(getApplicationContext(), LocationForegroundService.class);
+                restartServiceIntent.setPackage(getPackageName());
+                restartServiceIntent.setAction(ACTION_START);
+                PendingIntent restartPendingIntent = PendingIntent.getService(
+                    getApplicationContext(),
+                    102,
+                    restartServiceIntent,
+                    PendingIntent.FLAG_ONE_SHOT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                );
+                AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+                if (alarmManager != null) {
+                    alarmManager.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 1500, restartPendingIntent);
+                }
+            } catch (Exception ignored) {}
+        }
+
         stopTracking();
         if (networkExecutor != null) {
             networkExecutor.shutdown();
