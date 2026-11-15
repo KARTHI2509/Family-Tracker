@@ -170,6 +170,9 @@ class NativeLocationService {
           backgroundSupported: true,
           locationServicesEnabled: Boolean(androidRes.locationServicesEnabled),
           serviceRunning: Boolean(androidRes.serviceRunning),
+          ignoringBatteryOptimizations: Boolean(androidRes.ignoringBatteryOptimizations),
+          manufacturer: androidRes.manufacturer || '',
+          model: androidRes.model || '',
           sdkVersion: androidRes.sdkVersion || 30,
           isTrackingActive: this.isTracking,
           lastLocation: await this.getLastKnownLocation()
@@ -297,6 +300,36 @@ class NativeLocationService {
         await FamilyLocation.openLocationSettings();
       } catch (err) {
         console.warn('[NativeLocation] openLocationSettings error:', err);
+      }
+    }
+  }
+
+  /**
+   * Open OEM Autostart Management Settings directly (Xiaomi, Oppo, Vivo, Samsung, Huawei)
+   */
+  async openAutostartSettings() {
+    const env = this.getEnvironmentType();
+    if (env === 'android') {
+      try {
+        return await FamilyLocation.openAutostartSettings();
+      } catch (err) {
+        console.warn('[NativeLocation] openAutostartSettings error:', err);
+        await this.openAppSettings();
+      }
+    }
+  }
+
+  /**
+   * Open Android Battery Optimization Whitelist Dialog directly
+   */
+  async requestIgnoreBatteryOptimizations() {
+    const env = this.getEnvironmentType();
+    if (env === 'android') {
+      try {
+        return await FamilyLocation.requestIgnoreBatteryOptimizations();
+      } catch (err) {
+        console.warn('[NativeLocation] requestIgnoreBatteryOptimizations error:', err);
+        await this.openAppSettings();
       }
     }
   }

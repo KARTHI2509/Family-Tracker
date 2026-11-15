@@ -7,7 +7,7 @@ import { App } from '@capacitor/app';
 import {
   Shield, MapPin, Battery, Smartphone, CheckCircle, AlertTriangle,
   XCircle, Info, ExternalLink, X, RefreshCw, Globe, Navigation, Radio,
-  Sparkles, CheckCircle2
+  Sparkles, CheckCircle2, Zap
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -141,6 +141,15 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
 
   const handleOpenLocationSource = async () => {
     await nativeLocationService.openLocationSettings();
+  };
+
+  const handleOpenAutostart = async () => {
+    await nativeLocationService.openAutostartSettings();
+  };
+
+  const handleRequestIgnoreBattery = async () => {
+    await nativeLocationService.requestIgnoreBatteryOptimizations();
+    await refreshPermissions();
   };
 
   const handleSelectMode = (modeId) => {
@@ -413,6 +422,73 @@ export default function LocationSettingsModal({ isOpen, onClose }) {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* NATIVE ANDROID AUTOSTART & 24/7 BACKGROUND RELIABILITY */}
+        {isAndroid && (
+          <div style={{ background: 'rgba(168, 85, 247, 0.08)', border: '1px solid rgba(168, 85, 247, 0.3)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#C084FC', fontSize: '14px', fontWeight: 700 }}>
+                <Zap size={18} />
+                <span>24/7 Tracking & Autostart Settings</span>
+              </div>
+              <span style={{ fontSize: '10px', fontWeight: 600, color: '#C084FC', background: 'rgba(168, 85, 247, 0.2)', padding: '2px 8px', borderRadius: '6px', textTransform: 'uppercase' }}>
+                {permInfo.manufacturer ? `${permInfo.manufacturer.toUpperCase()}` : 'OEM OPTIMIZATION'}
+              </span>
+            </div>
+
+            <p style={{ fontSize: '12px', color: 'var(--text-300)', lineHeight: '1.5', margin: '0 0 12px' }}>
+              To ensure your location updates continuously <strong>even when the app is swiped away from Recent Apps</strong> or when your phone is locked, configure Autostart and Battery permissions:
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px', marginBottom: '12px' }}>
+              {/* Autostart Card */}
+              <div style={{ background: 'var(--bg-900)', border: '1px solid var(--glass-border)', borderRadius: '10px', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Zap size={15} color="#FBBF24" />
+                    <span>Autostart Permission</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-400)', marginTop: '2px' }}>
+                    Keeps GPS running when swiped from recent apps
+                  </div>
+                </div>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleOpenAutostart}
+                  style={{ fontSize: '12px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', background: 'linear-gradient(135deg, #8B5CF6, #6D28D9)' }}
+                >
+                  <ExternalLink size={14} />
+                  <span>Open Autostart Settings</span>
+                </button>
+              </div>
+
+              {/* Battery Optimization Card */}
+              <div style={{ background: 'var(--bg-900)', border: '1px solid var(--glass-border)', borderRadius: '10px', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Battery size={15} color={permInfo.ignoringBatteryOptimizations ? '#34D399' : '#F87171'} />
+                    <span>Battery Saver: No Restrictions</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: permInfo.ignoringBatteryOptimizations ? 'var(--success-400)' : 'var(--text-400)', marginTop: '2px' }}>
+                    {permInfo.ignoringBatteryOptimizations ? '✓ Whitelisted (No restrictions)' : 'Action recommended: Set to "No restrictions"'}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-ghost"
+                  onClick={handleRequestIgnoreBattery}
+                  style={{ fontSize: '12px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid var(--glass-border)', color: '#60A5FA' }}
+                >
+                  <ExternalLink size={14} />
+                  <span>{permInfo.ignoringBatteryOptimizations ? 'Re-check Battery Settings' : 'Set to No Restrictions'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div style={{ background: 'rgba(0, 0, 0, 0.25)', borderRadius: '8px', padding: '8px 12px', fontSize: '11px', color: '#E9D5FF', lineHeight: '1.4' }}>
+              💡 <strong>Tip for Xiaomi / Redmi / POCO users:</strong> In the Recent Apps screen, tap & hold FamilyTracker and tap the <strong>🔒 Lock icon</strong> so it is never cleared by memory cleaners.
+            </div>
           </div>
         )}
 

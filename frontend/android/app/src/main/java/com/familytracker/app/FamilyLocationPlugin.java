@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.ActivityManager;
 import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -13,6 +14,7 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.PowerManager;
 import android.provider.Settings;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
@@ -85,6 +87,14 @@ public class FamilyLocationPlugin extends Plugin {
         boolean serviceRunning = isServiceRunning(LocationForegroundService.class);
         boolean locationEnabled = isLocationProviderEnabled();
 
+        boolean ignoringBattery = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                ignoringBattery = pm.isIgnoringBatteryOptimizations(context.getPackageName());
+            }
+        }
+
         JSObject ret = new JSObject();
         ret.put("foreground", foregroundGranted);
         ret.put("fineLocation", fineGranted);
@@ -92,6 +102,9 @@ public class FamilyLocationPlugin extends Plugin {
         ret.put("background", backgroundGranted);
         ret.put("locationServicesEnabled", locationEnabled);
         ret.put("serviceRunning", serviceRunning);
+        ret.put("ignoringBatteryOptimizations", ignoringBattery);
+        ret.put("manufacturer", Build.MANUFACTURER != null ? Build.MANUFACTURER.toLowerCase() : "");
+        ret.put("model", Build.MODEL != null ? Build.MODEL : "");
         ret.put("sdkVersion", Build.VERSION.SDK_INT);
         ret.put("platform", "android");
         call.resolve(ret);
@@ -155,6 +168,90 @@ public class FamilyLocationPlugin extends Plugin {
             call.resolve();
         } catch (Exception e) {
             call.reject("Failed to open location settings: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void openAutostartSettings(PluginCall call) {
+        Context context = getContext();
+        String manufacturer = Build.MANUFACTURER != null ? Build.MANUFACTURER.toLowerCase() : "";
+        boolean opened = false;
+
+        Intent intent = new Intent();
+        try {
+            if (manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco")) {
+                intent.setComponent(new ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"));
+            } else if (manufacturer.contains("oppo") || manufacturer.contains("realme")) {
+                intent.setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"));
+            } else if (manufacturer.contains("vivo")) {
+                intent.setComponent(new ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"));
+            } else if (manufacturer.contains("huawei") || manufacturer.contains("honor")) {
+                intent.setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"));
+            } else if (manufacturer.contains("samsung")) {
+                intent.setComponent(new ComponentName("com.samsung.android.lool", "com.samsung.android.sm.ui.battery.BatteryActivity"));
+            }
+
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+            opened = true;
+        } catch (Exception e) {
+            try {
+                if (manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco")) {
+                    Intent miuiIntent = new Intent("miui.intent.action.OP_AUTO_START");
+                    miuiIntent.addCategory(Intent.CATEGORY_DEFAULT);
+                    miuiIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(miuiIntent);
+                    opened = true;
+                }
+            } catch (Exception ignored) {}
+        }
+
+        if (!opened) {
+            // Universal fallback: Open App Info Settings where Autostart / Battery is located
+            openAppSettings(call);
+            return;
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("opened", true);
+        ret.put("manufacturer", manufacturer);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void requestIgnoreBatteryOptimizations(PluginCall call) {
+        try {
+            Context context = getContext();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                if (pm != null && pm.isIgnoringBatteryOptimizations(context.getPackageName())) {
+                    JSObject ret = new JSObject();
+                    ret.put("alreadyWhitelisted", true);
+                    call.resolve(ret);
+                    return;
+                }
+
+                Intent intent = new Intent();
+                intent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                intent.setData(Uri.parse("package:" + context.getPackageName()));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+            } else {
+                openAppSettings(call);
+                return;
+            }
+            JSObject ret = new JSObject();
+            ret.put("requested", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            try {
+                Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(fallback);
+                call.resolve();
+            } catch (Exception e2) {
+                openAppSettings(call);
+            }
         }
     }
 
